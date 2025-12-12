@@ -7,8 +7,7 @@ Each module wraps commonly used tools into individual chunks that can be used in
 
 1. [Getting started](#getting-started)
 2. [Individual Module Use](#individual-module-use)
-3. [MetaMuseome Pipeline](#metamuseome-pipeline)
-4. [Tutorials and Use Cases](https://github.com/Kamouyiaraki/metaMuseome/blob/main/Tutorial.md)
+3. [Tutorials and Use Cases](https://github.com/Kamouyiaraki/metaMuseome/blob/main/Tutorial.md)
 
    
 ## Getting started 
@@ -43,13 +42,6 @@ conda install
 ### Outputs 
 
 ### Extra utility tools 
-
-## MetaMuseome Pipeline
-
-### Snakemake install
-### Quick run pipeline
-### Inputs
-### Outputs 
 
 
 ## References
