@@ -8,6 +8,11 @@ import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
+import json
+import csv
+import gzip
+import shutil
+
 
 from metahist_tools import (
     find_single_reads,
@@ -40,6 +45,8 @@ class Params:
     unmerged_dir: Optional[str] = None
     threads: Optional[int] = 4
     extra_args: Optional[list] = None
+    busco_lineage: Optional[str] = "fungi_odb10"
+    correction: Optional[bool] = False
 
 def build_params(args) -> Params:
     ''' Function to build parameters from argparse args.'''
@@ -59,390 +66,316 @@ def build_params(args) -> Params:
         output_suffix=args.output_suffix,
         unmerged_dir=args.unmerged_dir,
         threads=args.threads,
-        extra_args=args.extra_args
+        extra_args=args.extra_args,
+        correction=args.correction
     )
 
 # Set up logging
 logger = setup_logging("./logs", "assembly.log")
 
-#  Find required executables find_program(program_name):
-## "metaspades.py"
-## "idba_ud"
-## "fq2fa"
-## "metaMIC"
+##################### Helper functions #####################
 
-# Add in optional --correction flag for metaMIC and stats after correction
+def concatenate_fastas(fasta_a, fasta_b, output_fasta):
+    """Concatenate two FASTA files in order."""
+    with open(output_fasta, "w") as out:
+        for fa in (fasta_a, fasta_b):
+            if fa and Path(fa).exists():
+                with open(fa) as fh:
+                    out.write(fh.read())
 
-# Assembly-specific functions
-def run_idba_ud(sample_id, fasta_file, output_dir, output_dir_suffix=None, extra_args=None):
-    ''' Function to run IDBA-UD assembly.'''
+def check_dependencies(params):
+    """
+    Check required external programs based on selected pipeline options.
+    Fails fast if anything is missing.
+    """
 
-    logger.info("Starting idba-ud for %s.", fasta_file)
+    required = set()
 
-    assembly_dir = os.path.join(output_dir, f"{sample_id}_{output_dir_suffix}_idba_ud")
-    command = [
+    # Assembler-specific requirements
+    if params.assembler == "megahit":
+        required.add("megahit")
+    elif params.assembler == "metaspades":
+        required.add("metaspades.py")
+    elif params.assembler == "idba_ud":
+        required.update({"idba_ud", "fq2fa"})
+
+    logger.info("Assembler specified: %s", params.assembler)
+
+
+    # metaMIC correction requirements
+    if params.correction:
+        required.update({
+            "metaMIC",
+            "bwa",
+            "samtools",
+            "seqkit",
+        })
+        logger.info("Correction selected, checking dependencies...")
+
+
+    # BUSCO (always run downstream)
+    required.add("busco")
+
+    for prog in sorted(required):
+        try:
+            find_program(prog)
+        except Exception:
+            logger.error("Missing required program: %s", prog)
+            raise RuntimeError(
+                f"Required program not found in PATH: {prog}"
+            )
+
+##################### Assembly-specific functions #####################
+
+def run_idba_ud(
+    sample_id,
+    fasta_path,
+    output_dir,
+    output_dir_suffix=None,
+    extra_args=None,
+):
+    """Run IDBA-UD assembly."""
+
+    logger.info("Starting IDBA-UD for %s", sample_id)
+
+    assembly_dir = Path(output_dir) / f"{sample_id}_{output_dir_suffix}"
+
+    cmd = [
         "idba_ud",
-        "-r", fasta_file,
+        "-r", str(fasta_path),
         "--num_threads", "1",
-        "-o", assembly_dir
+        "-o", str(assembly_dir),
     ]
 
     if extra_args:
-        command += extra_args
-    try:
-        subprocess.run(command, capture_output=True, text=True, check=True)
-        logger.info("IDBA-UD completed for %s.", sample_id)
-    except subprocess.CalledProcessError as e:
-        logger.error("IDBA-UD failed for %s : %s.", sample_id, e.stderr)
-        return
+        cmd += extra_args
 
-    logger.debug("Running command: %s", " ".join(command))
+    logger.debug("Running command: %s", " ".join(cmd))
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        logger.info("IDBA-UD completed for %s", sample_id)
+    except subprocess.CalledProcessError as e:
+        logger.error("IDBA-UD failed for %s: %s", sample_id, e.stderr)
 
 def process_idba_samples(params):
-    """ Function that runs IDBA-UD assembly on samples based on user arguments,
-    checks assemblies and generated summary statistics of contigs.
-    """
+    """Run IDBA-UD assemblies."""
 
-    if os.path.exists(params.output_dir):
-        pass
+    params.output_dir.mkdir(exist_ok=True)
+    fq2fa = find_program("fq2fa")
+
+    # Resolve sample prefixes
+    if params.prefix:
+        prefixes = params.prefix
+    elif params.tracking_sheet:
+        prefixes = get_read_ids(
+            params.tracking_sheet,
+            mode="single",
+            prefix=None,
+            suffix=params.suffix,
+            column_name=params.column_name,
+            sheet=params.sheet,
+        )
     else:
-        os.mkdir(params.output_dir)
-
-    fq2fa_path = find_program("fq2fa")
-
-    if params.merged:
-        if params.prefix:
-            prefixes = [params.prefix]
-        else:
-            if params.tracking_sheet:
-                prefixes = get_read_ids(params.tracking_sheet,
-                    mode="single",
-                    prefix=params.prefix,
-                    suffix=params.suffix,
-                    column_name=params.column_name,
-                    sheet=params.sheet
-                )
-            else:
-                prefixes = get_read_ids(params.input_dir,
-                    mode="single",
-                    prefix=params.prefix,
-                    suffix=params.suffix,
-                    column_name=None,
-                    sheet=None
-                    )
-                print(prefixes, "\n")
-    elif params.paired:
-        ### uses ids to find pairs in the input dir but redundant because get_read_ids2 uses os.walk
-        if params.prefix:
-            prefixes = [params.prefix]
-        else:
-            if params.tracking_sheet:
-                prefixes = get_read_ids2(
-                    params.tracking_sheet,
-                    paired=True,
-                    prefix=params.prefix,
-                    suffix=params.suffix,
-                    column_name=params.column_name,
-                    sheet=params.sheet
-                )
-            elif params.ids:
-                prefixes = params.ids.split(",")
-            else:
-                prefixes = get_read_ids2(
-                    params.input_dir,
-                    paired=True,
-                    prefix=params.prefix,
-                    suffix=params.suffix,
-                    column_name=None,
-                    sheet=None
-                )
-        paired_files = {}
-    else:
-        logger.error("Either --paired or --merged must be specified.")
-        return
-
-    # Ensure paired_files exists for all modes (paired, both, merged)
-    paired_files = {}
-
-    unmerged_dir = params.unmerged_dir if params.unmerged_dir else params.input_dir
-    print(unmerged_dir)
-    extra_args = params.extra_args if hasattr(params, "extra_args") else None
+        prefixes = get_read_ids(
+            params.input_dir,
+            mode="single",
+            prefix=None,
+            suffix=params.suffix,
+        )
 
     jobs = []
-    for prefix in prefixes:
-        logger.info("Starting IDBA-UD for %s.", prefix)
-        fasta_file = None
 
-        if params.paired:
-            r1, r2 = find_paired_files2(params.input_dir, prefix)
-            paired_files[prefix] = [r1, r2]
-            if r1 and r2:
-                if r1.endswith((".fq", ".fastq")) and r2.endswith((".fq", ".fastq")):
-                    interleaved_out = os.path.join(params.input_dir, f"{prefix}_interleaved.fa")
-                    cmd = [fq2fa_path, "--merge", "--filter", r1, r2, interleaved_out]
-                    subprocess.run(cmd, check=True)
-                    fasta_file = interleaved_out
-                elif r1.endswith((".fa", ".fas", ".fasta", ".fna")) and \
-                    r2.endswith((".fa", ".fas", ".fasta", ".fna")):
-                    logger.error(
-                        "Found pair for %s. Convert to interleaved not supported, skipping.",
-                        prefix
-                        )
-                    continue
-                elif r1.endswith((".fq", ".fastq")) and \
-                    r2.endswith((".fa", ".fas", ".fasta", ".fna")):
-                    r1_fasta = os.path.join(params.input_dir, f"{os.path.basename(r1)}.fa")
-                    cmd = [fq2fa_path, r1, r1_fasta]
-                    subprocess.run(cmd, check=True)
-                    logger.warning(
-                        "Mixed file formats for %s, converted R1 to FASTA. Please verify.",
-                        prefix
-                    )
-                    fasta_file = r1_fasta
-                elif r1.endswith((".fa", ".fas", ".fasta", ".fna")) and \
-                    r2.endswith((".fq", ".fastq")):
-                    r2_fasta = os.path.join(params.input_dir, f"{os.path.basename(r2)}.fa")
-                    cmd = [fq2fa_path, r2, r2_fasta]
-                    subprocess.run(cmd, check=True)
-                    logger.warning(
-                        "Mixed file formats for %s, converted R2 to FASTA. Please verify.",
-                        prefix
-                    )
-                    fasta_file = r2_fasta
-                else:
-                    logger.error("Unrecognized file extension for: %s", r1 or r2)
-                    continue
-            else:
-                logger.error("Could not find both paired files for %s, skipping...", prefix)
+    for sample in prefixes:
+        fasta_path = None
+
+        if params.merged:
+            merged = find_single_reads(params.input_dir, sample)
+            if not merged:
+                logger.error("[%s] No merged reads found", sample)
                 continue
+            merged = merged[0]
 
-        elif params.merged:
-            single_file = find_single_reads(params.input_dir, prefix)
-            single_path = None
-            # find_single_reads returns a list; ensure we use a single path (or skip if none)
-            if not single_file:
-                logger.error("No single-end reads found for %s, skipping...", prefix)
-                continue
-            if isinstance(single_file, (list, tuple)):
-                if len(single_file) > 1:
-                    logger.error(
-                        "Multiple single-end files found for %s, using first: %s",
-                        prefix,
-                        single_file
-                    )
-                    continue
+            if merged.suffix in {".fq", ".fastq"}:
+                fasta_path = merged.with_suffix(".fa")
+                subprocess.run([fq2fa, merged, fasta_path], check=True)
             else:
-                single_path = single_file[0]
+                fasta_path = merged
 
-            if single_path.endswith((".fq", ".fastq")):
-                outfile = os.path.join(params.input_dir, f"{os.path.basename(single_file)}.fa")
-                cmd = [fq2fa_path, single_file, outfile]
-                subprocess.run(cmd, check=True)
-                fasta_file = outfile
-            elif single_path.endswith((".fa", ".fasta", ".fna", ".fas")):
-                fasta_file = single_path
-                logger.info("Found existing FASTA file: %s", fasta_file)
-            else:
-                logger.error("Unrecognized file format: %s", single_path)
-                continue
-        else:
-            logger.error("Either --paired or --merged must be specified.")
-            continue
-
-        jobs.append((prefix, fasta_file, params.output_dir, params.output_suffix, extra_args))
-
-    # Run jobs in parallel
-    with ProcessPoolExecutor(max_workers=params.threads) as executor:
-        futures = [executor.submit(run_idba_ud, *job) for job in jobs]
-
-        for future in as_completed(futures):
-            try:
-                future.result()
-            except subprocess.CalledProcessError as e:
-                logger.exception("IDBA-UD job failed: %s", str(e))
-
-    ## Check assembly
-    assembly_dir = params.output_dir
-    check_assemblies(assembly_dir, assembler="idba_ud", unmerged_dir=unmerged_dir, params=params)
-
-def process_metaspades_samples(params):
-    ''' 
-    Function that runs MetaSPAdes assembly on samples based on user arguments,
-    checks assemblies and generated summary statistics of contigs.
-    '''
-
-    ## Set up directory
-    if os.path.exists(params.output_dir):
-        pass
-    else:
-        os.mkdir(params.output_dir)
-
-    ## Find metaspades.py script on system
-    metaspades_path = find_program("metaspades.py")
-
-    if params.both:
-        if params.prefix:
-            prefixes = [params.prefix]
-        else:
-            if params.tracking_sheet:
-                prefixes = get_read_ids(
-                    params.tracking_sheet,
-                    mode="single",
-                    prefix=params.prefix,
-                    suffix=params.suffix,
-                    column_name=params.column_name,
-                    sheet=params.sheet
-                )
-            else:
-                prefixes = get_read_ids(
-                    params.input_dir,
-                    mode="single",
-                    prefix=params.prefix,
-                    suffix=params.suffix,
-                    column_name=None,
-                    sheet=None
-                )
-                print(prefixes, "\n")
-    elif params.paired:
-        ### uses ids to find pairs in the input dir
-        if params.prefix:
-            prefixes = [params.prefix]
-        else:
-            if params.tracking_sheet:
-                prefixes = get_read_ids2(
-                    params.tracking_sheet,
-                    paired=True,
-                    prefix=params.prefix,
-                    suffix=params.suffix,
-                    column_name=params.column_name,
-                    sheet=params.sheet
-                )
-            elif params.ids:
-                prefixes = params.ids.split(",")
-            else:
-                prefixes = get_read_ids2(
-                    params.input_dir,
-                    paired=True,
-                    prefix=params.prefix,
-                    suffix=params.suffix,
-                    column_name=None,
-                    sheet=None)
-        paired_files = {}
-    else:
-        logger.error("Either --paired or --merged must be specified.")
-        return
-    # Ensure paired_files exists for all modes (paired, both, merged)
-    paired_files = {}
-    logger.info("Found files for %s", prefixes)
-
-    unmerged_dir = params.unmerged_dir if params.unmerged_dir else params.input_dir
-    print(unmerged_dir)
-    extra_args = params.extra_args if hasattr(params, "extra_args") else None
-
-    jobs = []
-    for prefix in prefixes:
-        logger.info("Starting Megahit for %s", prefix)
-
-        # Merged reads
-        merged_file_path = None
-        if params.both:
-            # Get merged input file
-            merged_files = find_single_reads(params.input_dir, prefix=prefix)
-            merged_file_path = merged_files[0]
-            logger.info("Using %s for prefix: %s.", merged_file_path, prefix)
-            if not merged_file_path and (params.merged or params.both):
-                raise ValueError(f"No merged file found for prefix: {prefix}")
-            # Get paired input files
-            r1_path, r2_path = find_paired_files2(unmerged_dir, prefix)
-            if r1_path and r2_path:
-                paired_files[prefix] = [r1_path, r2_path]
-            paired_set = paired_files.get(prefix, (None, None))
         elif params.paired:
-            # Get paired input files
-            r1_path, r2_path = find_paired_files2(unmerged_dir, prefix)
-            if r1_path and r2_path:
-                paired_files[prefix] = [r1_path, r2_path]
-            paired_set = paired_files.get(prefix, (None, None))
-        else:
-            logger.error("Either --paired or --merged must be specified.")
-            return
+            r1, r2 = find_paired_files2(params.input_dir, sample)
+            if not (r1 and r2):
+                logger.error("[%s] Missing paired reads", sample)
+                continue
 
-        # Add job parameters based on mode
-        if params.paired:
-            jobs.append(
-                (
-                    prefix,
-                    None,
-                    str(paired_set[0]),
-                    str(paired_set[1]),
-                    metaspades_path,
-                    params.output_dir,
-                    params.output_suffix,
-                    extra_args,
-                    False,  # both=False represented as positional flag here
-                )
-            )
-        elif params.both:
-            jobs.append(
-                (
-                    prefix,
-                    str(merged_file_path),
-                    str(paired_set[0]),
-                    str(paired_set[1]),
-                    metaspades_path,
-                    params.output_dir,
-                    params.output_suffix,
-                    extra_args,
-                    True,  # both=True
-                )
+            fasta_path = params.input_dir / f"{sample}_interleaved.fa"
+            subprocess.run(
+                [fq2fa, "--merge", "--filter", r1, r2, fasta_path],
+                check=True,
             )
 
+        jobs.append(
+            (
+                sample,
+                fasta_path,
+                params.output_dir,
+                params.output_suffix,
+                params.extra_args,
+            )
+        )
 
-    # Run jobs in parallel
-    with ProcessPoolExecutor(max_workers=params.threads) as executor:
-        futures = [executor.submit(run_metaspades, *job) for job in jobs]
+    # Parallel execution
+    with ProcessPoolExecutor(max_workers=params.threads) as exe:
+        futures = [exe.submit(run_idba_ud, *job) for job in jobs]
+        for fut in as_completed(futures):
+            fut.result()
 
-        for future in as_completed(futures):
-            try:
-                future.result()
-            except subprocess.CalledProcessError as e:
-                logger.error("MetaSPAdes job failed: %s.", str(e))
+    check_assemblies(
+        params.output_dir,
+        assembler="idba_ud",
+        params=params,
+    )
 
-    ## Check assembly
-    assembly_dir = params.output_dir
-    check_assemblies(assembly_dir, assembler="metaspades", unmerged_dir=unmerged_dir, params=params)
-
-def run_metaspades(sample_id, merged_path, r1_path, r2_path, metaspades_path, output_dir, output_dir_suffix, extra_args=None, both=True):
-    '''Function to run MetaSPAdes with paired input.'''
+def run_metaspades(
+    sample_id,
+    merged_path=None,
+    r1_path=None,
+    r2_path=None,
+    output_dir=None,
+    output_dir_suffix=None,
+    extra_args=None,
+):
+    """Run MetaSPAdes."""
 
     logger.info("Starting MetaSPAdes for %s", sample_id)
+
+    assembly_dir = Path(output_dir) / f"{sample_id}_{output_dir_suffix}"
+
+    cmd = [
+        "metaspades.py",
+        "--phred-offset", "33",
+        "-o", str(assembly_dir),
+    ]
+
+    if extra_args:
+        cmd += extra_args
+
+    if merged_path and r1_path and r2_path:
+        cmd += ["--merged", merged_path, "-1", r1_path, "-2", r2_path]
+    elif r1_path and r2_path:
+        cmd += ["-1", r1_path, "-2", r2_path]
+    else:
+        logger.error("[%s] Missing reads for MetaSPAdes", sample_id)
+        return
+
+    logger.debug("Running command: %s", " ".join(cmd))
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        logger.info("MetaSPAdes completed for %s", sample_id)
+    except subprocess.CalledProcessError as e:
+        logger.error("MetaSPAdes failed for %s: %s", sample_id, e.stderr)
+
+def process_metaspades_samples(params):
+    """Run MetaSPAdes assemblies."""
+
+    params.output_dir.mkdir(exist_ok=True)
+
+    if params.prefix:
+        prefixes = params.prefix
+    elif params.tracking_sheet:
+        prefixes = get_read_ids(
+            params.tracking_sheet,
+            mode="single",
+            prefix=None,
+            suffix=params.suffix,
+            column_name=params.column_name,
+            sheet=params.sheet,
+        )
+    else:
+        prefixes = get_read_ids(
+            params.input_dir,
+            mode="single",
+            prefix=None,
+            suffix=params.suffix,
+        )
+
+    jobs = []
+
+    for sample in prefixes:
+        merged = r1 = r2 = None
+
+        if params.both:
+            merged_files = find_single_reads(params.input_dir, sample)
+            if not merged_files:
+                logger.error("[%s] No merged reads", sample)
+                continue
+            merged = merged_files[0]
+
+        if params.paired or params.both:
+            r1, r2 = find_paired_files2(
+                params.unmerged_dir or params.input_dir,
+                sample,
+            )
+            if not (r1 and r2):
+                logger.error("[%s] Missing paired reads", sample)
+                continue
+
+        jobs.append(
+            (
+                sample,
+                str(merged) if merged else None,
+                str(r1) if r1 else None,
+                str(r2) if r2 else None,
+                params.output_dir,
+                params.output_suffix,
+                params.extra_args,
+            )
+        )
+
+    with ProcessPoolExecutor(max_workers=params.threads) as exe:
+        futures = [exe.submit(run_metaspades, *job) for job in jobs]
+        for fut in as_completed(futures):
+            fut.result()
+
+    check_assemblies(
+        params.output_dir,
+        assembler="metaspades",
+        params=params,
+    )
+
+def run_megahit(sample_id, merged_path=None, r1_path=None, r2_path=None, output_dir=None, output_dir_suffix=None, extra_args=None):
+    '''Function to run megahit.'''
+         
+    logger.info("Starting Megahit for %s.", sample_id)
+
     assembly_dir = os.path.join(output_dir, f"{sample_id}_{output_dir_suffix}")
 
     # Form the command based on the available files
-    command = [
-        "python", 
-        metaspades_path,
-        "--phred-offset", "33",
-        "-o", assembly_dir
-        ]
+    command = ["megahit", "-o", assembly_dir]
 
     if extra_args:
         command += extra_args
-    if both and (r1_path or r2_path):
-        command.extend(["--merged", merged_path, "-1", r1_path, "-2", r2_path])
-    elif not both and (r1_path and r2_path):
+    if merged_path and not (r1_path or r2_path):
+        command.extend(["-r", merged_path])
+    elif not merged_path and r1_path and r2_path:
         command.extend(["-1", r1_path, "-2", r2_path])
+    elif merged_path and r1_path and r2_path:
+        command.extend(["-r", merged_path, "-1", r1_path, "-2", r2_path])
     else:
-        logger.error("ID %s: Missing necessary files to run Megahit. Skipping...", sample_id)
+        logger.error(
+            "ID %s: Missing necessary files to run Megahit. Skipping...",
+            sample_id
+        )
         return
 
     logger.debug("Running command: %s", " ".join(command))
 
     try:
         subprocess.run(command, capture_output=True, text=True, check=True)
-        logger.info("MetaSPAdes completed for %s.", sample_id)
+        logger.info("Megahit completed for %s.", sample_id)
     except subprocess.CalledProcessError as e:
-        logger.error("MetaSPAdes failed for %s : %s.", sample_id, e.stderr)
+        logger.error("Megahit failed for %s : %s.", sample_id, e.stderr)
         return
 
 def process_megahit_samples(params):
@@ -462,7 +395,6 @@ def process_megahit_samples(params):
             check_assemblies(
                 assembly_dir,
                 assembler=params.assembler,
-                unmerged_dir=unmerged_dir,
                 params=params
             )
             return
@@ -501,7 +433,7 @@ def process_megahit_samples(params):
                     prefix=params.prefix,
                     suffix=params.suffix,
                     column_name=params.column_name,
-                    sheet=params.tracking_sheet
+                    sheet=params.tracking_sheet, logger=None
                 )
             elif params.ids:
                 prefixes = params.ids.split(",")
@@ -511,7 +443,7 @@ def process_megahit_samples(params):
                     prefix=params.prefix,
                     suffix=params.suffix,
                     column_name=params.column_name,
-                    sheet=params.tracking_sheet
+                    sheet=params.tracking_sheet, logger=None
                 )
         paired_files = {}
     else:
@@ -571,9 +503,14 @@ def process_megahit_samples(params):
 
     ## Check assembly
     assembly_dir = params.output_dir
-    check_assemblies(assembly_dir, assembler="megahit", unmerged_dir=unmerged_dir, params=params)
+    check_assemblies(assembly_dir, assembler="megahit", params=params)
+
+
+##################### Assembly checks #####################
 
 def assemblies_exist_for_all_samples(assembly_dir, assembler):
+    """Check if assemblies exist for all samples in the assembly directory."""
+
     assembly_dir = Path(assembly_dir)
 
     if assembler == "megahit":
@@ -611,43 +548,101 @@ def assemblies_exist_for_all_samples(assembly_dir, assembler):
 
     return found_any
 
+def check_assemblies(
+    assembly_dir,
+    assembler,
+    params
+    ):
+    """
+    Check assemblies
+    Returns a list of paths to contig FASTA files to be evaluated downstream
+    """
 
-def run_megahit(sample_id, merged_path=None, r1_path=None, r2_path=None, output_dir=None, output_dir_suffix=None, extra_args=None):
-    '''Function to run megahit.'''
-         
-    logger.info("Starting Megahit for %s.", sample_id)
+    assembly_dir = Path(assembly_dir)
 
-    assembly_dir = os.path.join(output_dir, f"{sample_id}_{output_dir_suffix}")
-
-    # Form the command based on the available files
-    command = ["megahit", "-o", assembly_dir]
-
-    if extra_args:
-        command += extra_args
-    if merged_path and not (r1_path or r2_path):
-        command.extend(["-r", merged_path])
-    elif not merged_path and r1_path and r2_path:
-        command.extend(["-1", r1_path, "-2", r2_path])
-    elif merged_path and r1_path and r2_path:
-        command.extend(["-r", merged_path, "-1", r1_path, "-2", r2_path])
+    if assembler == "megahit":
+        target_file = "final.contigs.fa"
+        run_func = run_megahit_restart
+    elif assembler == "metaspades":
+        target_file = "scaffolds.fasta"
+        run_func = run_metaspades_restart
+    elif assembler == "idba_ud":
+        target_file = "final.contig.fa"
+        run_func = None
     else:
-        logger.error(
-            "ID %s: Missing necessary files to run Megahit. Skipping...",
-            sample_id
+        logger.error("Unsupported assembler: %s", assembler)
+        return []
+
+    # Validate / rerun assemblies
+
+    for subdir in assembly_dir.iterdir():
+        if not subdir.is_dir():
+            continue
+
+        sample_id = subdir.name
+        contigs_path = subdir / target_file
+
+        if contigs_path.is_file():
+            logger.info(
+                "Valid contig file exists for %s: %s",
+                sample_id,
+                contigs_path
+            )
+            continue
+
+        if assembler == "idba_ud":
+            scaffold_path = subdir / "scaffold.fa"
+            if scaffold_path.is_file():
+                logger.info(
+                    "Using IDBA-UD scaffold fallback for %s: %s",
+                    sample_id,
+                    scaffold_path
+                )
+            else:
+                logger.error(
+                    "IDBA-UD failed for %s. Consider re-running assembly.",
+                    sample_id
+                )
+            continue
+
+        logger.info(
+            "No contigs found for %s, rerunning %s",
+            sample_id,
+            assembler
         )
-        return
 
-    logger.debug("Running command: %s", " ".join(command))
+        if run_func is not None:
+            run_func(subdir, sample_id)
 
-    try:
-        subprocess.run(command, capture_output=True, text=True, check=True)
-        logger.info("Megahit completed for %s.", sample_id)
-    except subprocess.CalledProcessError as e:
-        logger.error("Megahit failed for %s : %s.", sample_id, e.stderr)
-        return
+        if not contigs_path.is_file():
+            logger.error(
+                "Assembler %s failed for sample %s",
+                assembler,
+                sample_id
+            )
 
+    # Collect successful assemblies
+    successful_assemblies = []
 
-# Assembly checks
+    for subdir in assembly_dir.iterdir():
+        if not subdir.is_dir():
+            continue
+
+        contigs_path = subdir / target_file
+        if contigs_path.is_file():
+            successful_assemblies.append(contigs_path)
+
+    if not successful_assemblies:
+        logger.warning("No successful assemblies found")
+        return []
+
+    logger.info(
+        "Found %d successful assemblies",
+        len(successful_assemblies)
+    )
+
+    return successful_assemblies
+
 def run_metaspades_restart(output_dir, sample_id):
     '''Rerun metaspades with --continue flag in case failure was due to interruption.'''
 
@@ -692,388 +687,370 @@ def run_megahit_restart(output_dir, sample_id):
     except Exception as e:
         logger.error("MEGAHIT execution error for %s: %s.", sample_id, e)
 
-def check_assemblies(assembly_dir, assembler, unmerged_dir, params, correction=False):
-    '''Function to check assemblies and rerun if necessary.'''
-    assembly_dir = Path(assembly_dir)
+
+##################### Assembly summaries #####################
+
+def get_coverage_and_correct(contig_file, params):
+    """
+    Run metaMIC on a contig file.
+    Returns: success : bool; corrected_fasta : path to metaMIC corrected_contigs.fa if successful
+    """
+
+    contig_file = Path(contig_file)
+    sample = contig_file.parent.name.replace("_merged_assembly", "")
+
+    unmerged_dir = (
+        Path(params.unmerged_dir)
+        if params.unmerged_dir
+        else Path(params.input_dir)
+    )
+
+    output_dir = contig_file.parent / "metaMIC_correction"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    bam_file = output_dir / f"{sample}_reads.bam"
+    pileup_file = output_dir / f"{sample}_reads.pileup"
+    corrected_fasta = output_dir / "corrected_contigs.fa"
+
+    logger.info("[%s] Locating paired reads", sample)
+
+    try:
+        if params.suffix is not None:
+            r1, r2 = find_paired_files2(unmerged_dir, sample, suffix=params.suffix)
+        else:
+            r1, r2 = find_paired_files2(unmerged_dir, sample)
+    except Exception as e:
+        logger.error("[%s] Error finding paired reads: %s", sample, e)
+        return False, None
+
+    if not (r1 and r2):
+        logger.warning("[%s] No paired reads found", sample)
+        return False, None
+
+    try:
+        subprocess.run(["bwa", "index", contig_file], check=True)
+
+        subprocess.run(
+            f"bwa mem -a -t {params.threads} {contig_file} {r1} {r2} | "
+            f"samtools view -h -q 10 -m 50 -F 4 -b | "
+            f"samtools sort -o {bam_file}",
+            shell=True,
+            check=True,
+        )
+
+        subprocess.run(
+            f"samtools mpileup -C 50 -A -f {contig_file} {bam_file} | "
+            f"awk '$3 != \"N\"' > {pileup_file}",
+            shell=True,
+            check=True,
+        )
+
+        subprocess.run(
+            [
+                "metaMIC", "extract_feature",
+                "--bam", bam_file,
+                "-c", contig_file,
+                "-o", output_dir,
+                "--pileup", pileup_file,
+                "-m", "meta",
+            ],
+            check=True,
+        )
+
+        subprocess.run(
+            [
+                "metaMIC", "predict",
+                "-c", contig_file,
+                "-o", output_dir,
+                "-a", params.assembler.upper(),
+                "-m", "meta",
+            ],
+            check=True,
+        )
+
+    except subprocess.CalledProcessError as e:
+        logger.error("[%s] metaMIC failed: %s", sample, e)
+        return False, None
+
+    if not corrected_fasta.exists():
+        logger.error("[%s] metaMIC finished but corrected_contigs.fa missing", sample)
+        return False, None
+
+    logger.info("[%s] metaMIC correction successful", sample)
+    return True, corrected_fasta
+
+def run_metamic_correction(assembler, summary, params):
+    """Run metaMIC correction across multiple hDNA assemblies 
+        This run metaMIC on each assembly, and if it fails, splits the assembly
+        into contigs >=1000 bp and <1000 bp, corrects the >=1000 bp contigs,
+        and re-merges them.\n\n
+        Also outputs a summary TSV that includes the correction level achieved per sample,
+        and output filepath.\n\n"""
+
+    results = []
 
     if assembler == "megahit":
         target_file = "final.contigs.fa"
-        run_func = run_megahit_restart
     elif assembler == "metaspades":
         target_file = "scaffolds.fasta"
-        run_func = run_metaspades_restart
     elif assembler == "idba_ud":
         target_file = "final.contig.fa"
-        run_func = None
     else:
         logger.error("Unsupported assembler: %s", assembler)
         return
 
-    for subdir in assembly_dir.iterdir():
-        if not subdir.is_dir():
-            continue  # skip non-directories
+    assembly_paths = sorted(params.input_dir.glob("**/" + target_file))
 
-        sample_id = subdir.name
-        contigs_path = subdir / target_file
+    for assembly in assembly_paths:
+        sample = assembly.parent.name
+        logger.info("Processing: %s", sample)
 
-        if contigs_path.is_file():
-            logger.info(
-                "A valid contig file exists for %s: %s.",
-                sample_id,
-                contigs_path
-            )
-        elif assembler == "idba_ud":
-            # Try fallback scaffold.fa
-            alt_file = "scaffold.fa"
-            scaffold_path = subdir / alt_file
-            if scaffold_path.is_file():
-                logger.info(
-                    "Found scaffold fallback for %s; using IDBA-UD: %s.",
-                    sample_id,
-                    scaffold_path
-                )
-            else:
-                logger.error(
-                    "IDBA-UD failed for %s. Consider using a different assembler or starting again",
-                    sample_id
-                )
-        else:
-            logger.info(
-                "No valid contigs found for %s. Rerunning %s in case of interruption.",
-                sample_id,
-                assembler)
-            if run_func is not None:
-                run_func(subdir, sample_id)
+        final_fa = assembly.parent / "assembly.metaMIC_corrected.fa"
 
-            # Check again
-            if (subdir / target_file).is_file():
-                logger.info(
-                    "Assembler %s successfully created contigs for %s.",
-                    assembler,
-                    sample_id
-                )
-            else:
-                logger.error(
-                    "Assembler %s failed for sample %s.",
-                    assembler,
-                    sample_id
-                )
+        # Attempt full assembly correction
+        ok, corrected = get_coverage_and_correct(assembly, params)
 
-    # After all reruns, list which assemblies worked
-    successful_assemblies = []
-
-    for paths in assembly_dir.iterdir():
-        if not paths.is_dir():
+        if ok:
+            concatenate_fastas(corrected, None, final_fa)
+            results.append([sample, "full", str(final_fa)])
             continue
-        contigs_path = paths / target_file
-        if contigs_path.is_file():
-            successful_assemblies.append(contigs_path)
 
-    if successful_assemblies:
-        logger.info(
-            "Found %d successful assemblies.",
-            len(successful_assemblies)
-        )
+        # Fallback: Split by length and retry
 
-        if correction:
-            logger.info("Running assembly correction using metaMIC...")
-            for contig_file in successful_assemblies:
-                if contig_file.is_file():
-                    get_coverage_and_correct(contig_file, unmerged_dir, params)
-            successful_assemblies = []
-            target_file = "metaMIC_corrected_contigs.fa"
-            for paths in assembly_dir.iterdir():
-                if not paths.is_dir():
-                    continue
-                contigs_path = paths / target_file
-                if contigs_path.is_file():
-                    successful_assemblies.append(contigs_path)
+        logger.info("[%s]: Splitting assembly by contig length", sample)
 
-        logger.info(
-            "Running BUSCO on %d assemblies in parallel...",
-            len(successful_assemblies)
-        )
+        long_contigs = assembly.parent / "assembly.gt1000.fa"
+        short_contigs = assembly.parent / "assembly.lt1000.fa"
 
-        busco_jobs = []
-        with ProcessPoolExecutor(max_workers=params.threads) as executor:
-            for contig_file in successful_assemblies:
-                if contig_file.is_file():
-                    busco_jobs.append(
-                        executor.submit(
-                            run_busco_on_assemblies,
-                            contig_file,
-                            lineage="fungi_odb10",
-                            mode="genome"
-                        )
-                    )
-
-            for future in as_completed(busco_jobs):
-                try:
-                    future.result()
-                except Exception as e:
-                    logger.error("BUSCO failed for one assembly: %s", e)
-
-        logger.info("Summarising BUSCO results...")
-        summarize_busco_results(assembly_dir, assembler)
-        logger.info("Generating a contig summary with seqfu...")
-        generate_seqfu_summary(successful_assemblies, assembly_dir, assembler)
-    else:
-        logger.warning("No successful assemblies found to summarize.")
-
-
-#######################################################################################
-##################### Assembly summaries
-
-# Coverage stats & Assembly polishing
-
-def get_coverage_and_correct(contig_file, unmerged_dir, params):
-    ''' Function to estimate coverage and generate an mpileup summary file for each contig file'''
-
-    #define variables
-    unmerged_dir = params.unmerged_dir if params.unmerged_dir else params.input_dir
-    prefix = contig_file.parent.name.replace("_assembly", "")
-    current_dir = contig_file.parent.name
-    output_dir= f"{current_dir}/metaMIC_correction"
-    bam_file = f"{output_dir}/{prefix}_reads.bam"
-    pileup_file = f"{output_dir}/{prefix}_reads.pileup"
-
-    # Find paired files for each contig
-    logger.info("Checking files for %s", prefix)
-    r1_path, r2_path = find_paired_files2(unmerged_dir, prefix)
-
-
-    if not (r1_path and r2_path):
-        logger.warning("No paired reads found for %s â€” skipping.", prefix)
-        return
-
-    # Define commands
-    bwa_index = ["bwa", "index", str(contig_file)]
-    full_cmd = (
-        f"bwa mem -a -t {params.threads} {contig_file} {r1_path} {r2_path} | "
-        f"samtools view -h -q 10 -m 50 -F 4 -b | "
-        f"samtools sort -o {bam_file}"
-    )
-    mpileup_cmd = f"samtools mpileup -C 50 -A -f {contig_file} {bam_file} \
-        awk '$3 != \"N\"' > {pileup_file}"
-    mic_extract = [
-        "metaMIC",
-        "extract_feature",
-        "--bam", str(bam_file),
-        "-c", str(contig_file),
-        "-o", str(output_dir),
-        "--pileup", str(pileup_file),
-        "-m", "meta"
-    ]
-    mic_cmd = [
-        "metaMIC",
-        "predict",
-        "-c", str(contig_file),
-        "-o", str(output_dir),
-        "-a", params.assembler.upper(),
-        "-m", "meta"
-    ]
-
-    logger.info("Files found for %s: %s, %s", prefix, r1_path, r2_path)
-
-    # Index contig file
-    try:
-        subprocess.run(bwa_index, check=True)
-    except subprocess.CalledProcessError:
-        logger.error("BWA index failed for %s", {' '.join(bwa_index)})
-
-    # run bwa mem, samtools view/filter and sort
-    try:
-        subprocess.run(full_cmd, shell=True, check=True)
-    except subprocess.CalledProcessError:
-        logger.error("Read alignment failed for %s", {' '.join(full_cmd)})
-
-    # Samtools mpileup
-    try:
-        subprocess.run(mic_extract, shell=True, check=True)
-    except subprocess.CalledProcessError:
-        logger.error("Samtools mpileup failed for %s", {' '.join(mic_extract)})
-
-    # metaMIC
-    try:
-        subprocess.run(mpileup_cmd, check=True)
-    except subprocess.CalledProcessError:
-        logger.error("metaMIC extract_feature failed for %s", {' '.join(mpileup_cmd)})
-
-    try:
-        subprocess.run(mic_cmd, check=True)
-    except subprocess.CalledProcessError:
-        logger.error("metaMIC correction failed for %s", {' '.join(mic_cmd)})
-
-
-# BUSCO summary
-def run_busco_on_assemblies(fasta_path, lineage="fungi_odb10", mode="genome"):
-    """
-    Run BUSCO on a list of assembly FASTA files.
-
-    Parameters:
-    - fasta_path: Path to the assembly FASTA file.
-    - lineage: BUSCO lineage dataset (default: fungi_odb10)
-    - mode: BUSCO mode (default: genome)
-    """
-
-    output_dir = fasta_path.parent / "busco_results"
-    output_dir.mkdir(exist_ok=True)
-
-    cmd = [
-            "busco",
-            "-i", str(fasta_path),
-            "-m", mode,
-            "-l", lineage,
-            "--metaeuk",
-            "-f",
-            "-o", str(output_dir)
-        ]
-
-    find_program_out = find_program("busco")
-    if not find_program_out:
-        logger.error("BUSCO not found on system. Please install BUSCO to run this function.")
-        return
-    else:
-        logger.info("Found BUSCO at: %s", find_program_out)
-        logger.info("Running BUSCO for %s : %s", fasta_path, {' '.join(cmd)})
         try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            logger.error("BUSCO failed for %s: %s", fasta_path, e.stderr)
+            subprocess.run(
+                ["seqkit", "seq", "-m", "1000", assembly],
+                stdout=open(long_contigs, "w"),
+                check=True,
+            )
+            subprocess.run(
+                ["seqkit", "seq", "-M", "999", assembly],
+                stdout=open(short_contigs, "w"),
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            logger.error("[%s] Contig splitting failed", sample)
+            results.append([sample, "failed", str(assembly)])
+            continue
 
-def summarize_busco_results(assembly_dir, assembler):
-    '''Summarize BUSCO results from multiple assemblies into a single TSV file.'''
+        ok, corrected = get_coverage_and_correct(long_contigs, params)
 
-    busco_files = list(assembly_dir.rglob("short_summary_*.txt"))
-    if output_file is None:
-        output_file = assembly_dir / f"{assembler}_busco_summary.tsv"
-    parse_busco_to_tsv(busco_files, output_file)
+        if ok:
+            concatenate_fastas(corrected, short_contigs, final_fa)
+            results.append([sample, "split_gt1000_merged", str(final_fa)])
+        else:
+            logger.warning("[%s] metaMIC failed after splitting", sample)
+            results.append([sample, "failed", str(assembly)])
 
+    # Write summary
+    with open(summary, "w", newline="") as fh:
+        writer = csv.writer(fh, delimiter="\t")
+        writer.writerow(["sample", "correction_level", "filepath"])
+        writer.writerows(results)
 
-def parse_busco_to_tsv(filepaths, output_tsv):
-    '''Parse multiple BUSCO short-summary files and output a TSV.'''
+    logger.info("Summary written to %s", summary)
 
-    parsed_rows = []
+def metamic_worker(contig_path: Path, params):
+    sample = contig_path.parent.name.replace("_merged_assembly", "")
+    
+    final_fa = contig_path.parent / "assembly.metaMIC_corrected.fa"
 
-    # Regex definitions
-    version_re = re.compile(r"BUSCO version is:\s*([\d\.]+)")
-    lineage_re = re.compile(r"The lineage dataset is:\s*(\S+)\s*\
-        (Creation date:\s*([\d\-]+),\s*number of genomes:\s*(\d+),\s*number of BUSCOs:\s*(\d+)\)"
-    )
-    input_re = re.compile(r"Summarized benchmarking .* for file (.+)")
-    mode_re = re.compile(r"BUSCO was run in mode:\s*(\S+)")
-    predictor_re = re.compile(r"Gene predictor used:\s*(\S+)")
-    metrics_re = re.compile(
-        r"C:(\d+\.?\d*)%\[S:(\d+\.?\d*)%,D:(\d+\.?\d*)%\],F:(\d+\.?\d*)%,M:(\d+\.?\d*)%,n:(\d+)"
-    )
-    count_re = {
-        "complete": re.compile(r"(\d+)\s+Complete BUSCOs"),
-        "single_copy": re.compile(r"(\d+)\s+Complete and single-copy BUSCOs"),
-        "duplicated": re.compile(r"(\d+)\s+Complete and duplicated BUSCOs"),
-        "fragmented": re.compile(r"(\d+)\s+Fragmented BUSCOs"),
-        "missing": re.compile(r"(\d+)\s+Missing BUSCOs"),
-        "total_groups": re.compile(r"(\d+)\s+Total BUSCO groups searched"),
-    }
-    assembly_re = {
-        "num_scaffolds": re.compile(r"(\d+)\s+Number of scaffolds"),
-        "num_contigs": re.compile(r"(\d+)\s+Number of contigs"),
-        "total_length": re.compile(r"(\d+)\s+Total length"),
-        "percent_gaps": re.compile(r"([\d\.]+%)\s+Percent gaps"),
-        "scaffold_n50": re.compile(r"(.+?)\s+Scaffold N50"),
-        "contig_n50": re.compile(r"(.+?)\s+Contigs N50"),
-    }
-    dep_re = re.compile(r"(\S+):\s+(\S+)")  # dependencies
+    ok, corrected = get_coverage_and_correct(contig_path, params)
 
-    # Parse each file
-    for fp in filepaths:
-        fp = Path(fp)
-        row = {
-            "file": str(fp),
-            "busco_version": None,
-            "lineage_dataset": None,
-            "lineage_creation_date": None,
-            "lineage_num_genomes": None,
-            "lineage_num_buscos": None,
-            "input_file": None,
-            "mode": None,
-            "gene_predictor": None,
-            "C": None,
-            "S": None,
-            "D": None,
-            "F": None,
-            "M": None,
-            "n": None,
-            "complete": None,
-            "single_copy": None,
-            "duplicated": None,
-            "fragmented": None,
-            "missing": None,
-            "total_groups": None,
-            "num_scaffolds": None,
-            "num_contigs": None,
-            "total_length": None,
-            "percent_gaps": None,
-            "scaffold_n50": None,
-            "contig_n50": None
+    if ok:
+        concatenate_fastas(corrected, None, final_fa)
+        return sample, "full", final_fa
+
+    # Fallback: split by length
+    long_contigs = contig_path.parent / "assembly.gt1000.fa"
+    short_contigs = contig_path.parent / "assembly.lt1000.fa"
+
+    try:
+        subprocess.run(
+            ["seqkit", "seq", "-m", "1000", contig_path],
+            stdout=open(long_contigs, "w"),
+            check=True,
+        )
+        subprocess.run(
+            ["seqkit", "seq", "-M", "999", contig_path],
+            stdout=open(short_contigs, "w"),
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return sample, "failed", contig_path
+
+    ok, corrected = get_coverage_and_correct(long_contigs, params)
+
+    if ok:
+        concatenate_fastas(corrected, short_contigs, final_fa)
+        return sample, "split_gt1000_merged", final_fa
+
+    return sample, "failed", contig_path
+
+def run_metamic_parallel(contig_paths, params):
+    summary_path = params.output_dir / "metaMIC_summary.tsv"
+    results = []
+
+    with ProcessPoolExecutor(max_workers=params.threads) as exe:
+        futures = {
+            exe.submit(metamic_worker, p, params): p
+            for p in contig_paths
         }
 
-        dependencies = {}
+        for fut in as_completed(futures):
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                logger.error("metaMIC worker failed: %s", e)
 
-        with open(fp, "r") as f:
-            for line in f:
-                line = line.strip()
+    with open(summary_path, "w", newline="") as fh:
+        writer = csv.writer(fh, delimiter="\t")
+        writer.writerow(["sample", "correction_level", "filepath"])
+        writer.writerows(
+            [r for r in results if r is not None]
+        )
 
-                # main metadata
-                if m := version_re.search(line):
-                    row["busco_version"] = m.group(1)
-                if m := lineage_re.search(line):
-                    row["lineage_dataset"] = m.group(1)
-                    row["lineage_creation_date"] = m.group(2)
-                    row["lineage_num_genomes"] = int(m.group(3))
-                    row["lineage_num_buscos"] = int(m.group(4))
-                if m := input_re.search(line):
-                    row["input_file"] = m.group(1)
-                if m := mode_re.search(line):
-                    row["mode"] = m.group(1)
-                if m := predictor_re.search(line):
-                    row["gene_predictor"] = m.group(1)
+    logger.info("metaMIC summary written to %s", summary_path)
 
-                # metrics line
-                if m := metrics_re.search(line):
-                    row["C"] = float(m.group(1))
-                    row["S"] = float(m.group(2))
-                    row["D"] = float(m.group(3))
-                    row["F"] = float(m.group(4))
-                    row["M"] = float(m.group(5))
-                    row["n"] = int(m.group(6))
+    # Return corrected assemblies where available
+    return [
+        r[2] for r in results
+        if r and Path(r[2]).exists()
+    ]
 
-                # BUSCO counts
-                for key, regex in count_re.items():
-                    if m := regex.search(line):
-                        row[key] = int(m.group(1))
+# BUSCO summary
+def busco_worker(contig_path, busco_outdir, lineage, threads):
+    sample = contig_path.parent.name
+    outdir = busco_outdir / sample
+    outdir.mkdir(parents=True, exist_ok=True)
 
-                # assembly stats
-                for key, regex in assembly_re.items():
-                    if m := regex.search(line):
-                        row[key] = m.group(1)
+    cmd = [
+        "busco",
+        "-i", str(contig_path),
+        "-l", lineage,
+        "-m", "genome",
+        "-c", str(threads),
+        "-o", sample,
+        "--out_path", str(busco_outdir),
+        "-f",
+        "--metaeuk"
+    ]
 
-                # dependencies
-                if m := dep_re.search(line):
-                    tool, ver = m.groups()
-                    dependencies[tool] = ver
+    subprocess.run(cmd, check=True)
+    return sample
 
-        # flatten dependencies into columns
-        for tool, ver in dependencies.items():
-            row[f"dep_{tool}"] = ver
+def run_busco_parallel(contig_paths, params):
+    ensure_busco_lineage(params.busco_lineage)
 
-        parsed_rows.append(row)
+    busco_dir = params.output_dir / "busco"
+    busco_dir.mkdir(exist_ok=True)
 
-    # Convert to DataFrame and save as TSV
-    df = pd.DataFrame(parsed_rows)
-    df.to_csv(output_tsv, sep="\t", index=False)
+    with ProcessPoolExecutor(max_workers=params.threads) as exe:
+        futures = [
+            exe.submit(
+                busco_worker,
+                p,
+                busco_dir,
+                params.busco_lineage,
+                max(1, params.threads // 2),
+            )
+            for p in contig_paths
+        ]
+
+        for fut in as_completed(futures):
+            try:
+                fut.result()
+            except Exception as e:
+                logger.error("BUSCO failed: %s", e)
+
+    return busco_dir
+
+def ensure_busco_lineage(lineage):
+    """
+    Ensure that a BUSCO lineage dataset is available locally.
+    Downloads it once if missing.
+    """
+    try:
+        logger.info("Checking availability of BUSCO lineage: %s", lineage)
+        subprocess.run(
+            ["busco", "--list-datasets"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError:
+        logger.warning("Could not list BUSCO datasets Ã¢â‚¬â€ attempting download")
+
+    # Try a no-op download check
+    try:
+        subprocess.run(
+            ["busco", "--download", lineage],
+            check=True
+        )
+        logger.info("BUSCO lineage %s is available", lineage)
+    except subprocess.CalledProcessError as e:
+        logger.error("Failed to download BUSCO lineage %s", lineage)
+        raise RuntimeError(
+            f"Unable to download BUSCO lineage dataset: {lineage}"
+        ) from e
+
+def summarize_busco_json(base_dir, output_csv=None):
+    """
+    Summarize BUSCO results from JSON files in a directory.
+
+    Parameters
+    ----------
+    base_dir : str or Path
+        Directory containing BUSCO output JSON files.
+    output_csv : str or Path, optional
+        Path to write a summary CSV. If None, CSV is not written.
+
+    Returns
+    -------
+    pd.DataFrame
+        Summary table with BUSCO results and filenames.
+    """
+    base_dir = Path(base_dir)
+    if not base_dir.exists():
+        logger.error("Base directory does not exist: %s", base_dir)
+        return pd.DataFrame()
+
+    data = []
+
+    # Iterate recursively over JSON files
+    for json_file in base_dir.rglob("*.json"):
+        try:
+            with open(json_file, "r") as f:
+                content = json.load(f)
+                results = content.get("results", None)
+                if results:
+                    results["filename"] = json_file.name
+                    results["sample"] = json_file.parent.name
+                    data.append(results)
+                else:
+                    logger.warning("No 'results' found in %s", json_file)
+        except json.JSONDecodeError:
+            logger.error("Failed to parse JSON file: %s", json_file)
+        except Exception as e:
+            logger.error("Error processing %s: %s", json_file, e)
+
+    if not data:
+        logger.warning("No BUSCO results found in %s", base_dir)
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data)
+
+    if output_csv:
+        df.to_csv(output_csv, index=False)
+        logger.info("BUSCO summary written to: %s", output_csv)
 
     return df
-
 
 # Assembly summary
 def generate_seqfu_summary(contig_paths, output_dir, assembler):
@@ -1098,32 +1075,66 @@ def generate_seqfu_summary(contig_paths, output_dir, assembler):
         logger.error("IO error writing to summary file: %s", e)
 
 
+##################### Main function #####################
+
 def main(args):
     '''Main function to run assembly based on input arguments.'''
 
     params = build_params(args)
-    logger.debug("Parameters: %s", params)
 
-    logger.info("Starting assembly pipeline...")
+    # Normalise paths
+    params.input_dir = Path(params.input_dir)
+    params.output_dir = Path(params.output_dir)
+    if params.unmerged_dir:
+        params.unmerged_dir = Path(params.unmerged_dir)
 
-    # Check that assembler is installed before assembly
-    find_program(params.assembler)
+    # Dependency check
+    logger.info("Checking dependencies")
+    check_dependencies(params)
 
-    try:
-        # Start Assembly (depending on assembler)
-        if params.assembler == "idba_ud":
-            process_idba_samples(params)
-        elif params.assembler == "metaspades":
-            process_metaspades_samples(params)
-        elif params.assembler == "megahit":
-            process_megahit_samples(params)
+    logger.info("Starting assembly pipeline")
 
-    except ValueError as e:
-        logger.error("ValueError: %s", e)
+    # Assembly
+    if params.assembler == "megahit":
+        process_megahit_samples(params)
+    elif params.assembler == "metaspades":
+        process_metaspades_samples(params)
+    elif params.assembler == "idba_ud":
+        process_idba_samples(params)
+
+    # Check assemblies
+    assemblies = check_assemblies(
+        assembly_dir=params.output_dir,
+        assembler=params.assembler,
+        params=params
+    )
+
+    if not assemblies:
+        logger.error("No successful assemblies found")
         sys.exit(1)
 
-    logger.info("All samples assembled!")
+    # metaMIC correction (optional)
+    if params.correction:
+        logger.info("Running metaMIC correction in parallel")
+        assemblies = run_metamic_parallel(assemblies, params)
 
+    # BUSCO
+    logger.info("Running BUSCO in parallel")
+    busco_dir = run_busco_parallel(assemblies, params)
+
+    summarize_busco_json(
+        base_dir=busco_dir,
+        output_csv=params.output_dir / "busco_summary.csv"
+    )
+
+    # SeqFu summary
+    generate_seqfu_summary(
+        contig_paths=assemblies,
+        output_dir=params.output_dir,
+        assembler=params.assembler
+    )
+
+    logger.info("Pipeline completed successfully")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -1163,6 +1174,11 @@ if __name__ == "__main__":
         help="Run assembly correction using metaMIC after assembly. \
         This requires specifying --unmerged_dir for read files if paired \
         files are not found in input_dir."
+    )
+    parser.add_argument(
+        "--busco_lineage",
+        default="fungi_odb10",
+        help="BUSCO lineage dataset to use for assembly evaluation."
     )
 
     p = parser.add_mutually_exclusive_group(required=False)
