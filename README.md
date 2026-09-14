@@ -24,6 +24,9 @@ pip install
 
 ## metaMuseomics Modules
 
+![Modules flowchart](https://github.com/museomics/metaMuseomics/blob/main/img/flowchart.svg)
+
+
 ### Modules
 |Module| dependency | version | Citation|
 |---|---|---|---|
