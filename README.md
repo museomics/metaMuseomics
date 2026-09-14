@@ -58,6 +58,8 @@ Finally, assemblies are assessed using BUSCO. BUSCO uses the selected lineage, d
 SeqFu is run once across all successful contig FASTAs with GC and CSV output enabled.
 
 
+*Note: The assembly module uses process-level parallelism, whereas the preprocessing/decontamination modules use thread pools. This is mainly due to the relatively heavyweight assembler/BUSCO processes versus the lighter orchestration around external commands.*
+
 ## Contents
 
 1. [Getting started](#getting-started)
