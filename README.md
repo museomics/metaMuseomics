@@ -1,7 +1,62 @@
 # metaMuseomics
-Python package of scripts for use in metagenomic assembly and analysis of degraded, metagenomic samples common in museum specimen
+Python package of scripts for use in metagenomic assembly and analysis of degraded, metagenomic samples common in museum specimen.
 
-Each module wraps commonly used tools into individual chunks that can be used in isolation where needed or as part of an automated pipeline. The main purpose of each wrapper is to have optimised parameters specifically for dealing with hDNA. In some cases (e.g., the assembly module) this has involved changing some source code in assembler installs (IDBA-UD), so make sure to keep this in an isolated environment if you use IDBA-UD for DNA that is not highly degraded.  
+There are 3 main modules, plus a suite of supplementary modules that can be used in a comprehensive pipeline. Each module wraps commonly used metagenomics tools into individual chunks that can be used in isolation where needed or as part of an automated pipeline. The main purpose of each module is to have optimised parameters specifically for dealing with hDNA. 
+
+### 1. `fastp_module.py`
+
+Performs initial adapter/quality trimming, poly-G trimming, correction and deduplication in a first step. This trimming step outputs separate stats summaries and an overlap summary. The output files of this first step are then used to merge reads, before a last round of summaries are generated. 
+
+The poly-G trimmming, adapter, quality, correction and deduplication are all defaults, but further fastp parameters can be included in the first step by the user. 
+
+### 2. `decontam_module.py`
+The decontam module is designed to use references to remove any potential reads sourced from known contaminants. In this particular instance it is set up for PhiX and human read decontamination. 
+
+The important point is that PhiX removal happens before human decontamination, and the two stages are separately parallelised across files, so that there are separate outputs for each stage. 
+
+### 3. `assembly_module.py`
+This is substantially larger than the other two modules: it combines assembly (with 3 assembler options: MEGAHIT, MetaSPADEs, IDBA-UD), validation/restarts, optional metaMIC correction, BUSCO assessment and SeqFu statistics.
+
+In the first step, assembly happens with the chosen assembler. IDBA-UD first converts paired FASTQs into an interleaved FASTA using fq2fa; merged FASTQ can also be converted to FASTA. MEGAHIT supports three modes in the wrapper: merged reads only, paired reads only, or merged + paired reads.
+
+Assemblies are then checked with `check_assemblies()`. This is particularly important because it acts as the gatekeeper before downstream correction/QC: it collects only assemblies with the expected contig file. IDBA-UD has a special fallback to scaffold.fa, whereas MEGAHIT and MetaSPAdes are restarted if their expected output is missing.
+
+A correction strategy can then be implemented (with the flag `--correction`), using metaMIC, that utilises a fallback for contigs generated <1000 bp:
+```
+Assembly
+   │
+   ▼
+BWA map reads → contigs
+   │
+   ▼
+SAMtools filtering/sorting
+   │
+   ▼
+SAMtools mpileup + AWK
+   │
+   ▼
+metaMIC extract_feature
+   │
+   ▼
+metaMIC predict
+   │
+   ├── success → corrected_contigs.fa
+   │
+   └── failure
+         │
+         ▼
+   split contigs at 1000 bp
+       ├── >=1000 bp → metaMIC
+       └── <1000 bp → retain unchanged
+              │
+              ▼
+       concatenate corrected + short
+```
+
+Finally, assemblies are assessed using BUSCO. BUSCO uses the selected lineage, defaults to fungi_odb10, runs in genome mode with --metaeuk, and is parallelised across assemblies. The resulting JSON files are then converted into "busco_summary.csv".
+
+SeqFu is run once across all successful contig FASTAs with GC and CSV output enabled.
+
 
 ## Contents
 
@@ -17,11 +72,6 @@ Each module wraps commonly used tools into individual chunks that can be used in
 
 pip install
 
-### The dependencies: 
-
-
-
-
 ## metaMuseomics Modules
 
 ![Modules flowchart](https://github.com/museomics/metaMuseomics/blob/main/img/flowchart.svg)
@@ -31,14 +81,12 @@ Module | Main function / role | Key functions | Dependencies |
 | `nonpareil_module.py`  | Metagenomic sequencing-complexity estimation. Runs Nonpareil on FASTQ files and summarises coverage, redundancy, diversity and sequencing effort required for 95% coverage.            | `run_nonpareil()` – runs Nonpareil per FASTQ; `parse_npo()` – extracts metrics from `.npo`; `batch_run_nonpareil()` – processes all matching FASTQs and creates summary CSV.| **External:** `nonpareil`. **Python:** standard library|
 | `fastp_module.py` | Read preprocessing/QC. Trims and filters paired-end FASTQs, merges overlapping pairs, produces overlap plots, and creates summary statistics. Samples can be processed in parallel. | `run_fastp_trim()`: adapter/quality trimming, poly-G trimming and deduplication; `run_fastp_merge()`: merges paired reads; `run_fastp_overlap_plot()`: creates overlap HTML; `generate_seqkit_stats()`: FASTQ statistics; `run_fastp_json_merge()`: combines fastp JSON results via R; `process_sample()`: per-sample workflow | **External**: `fastp`, `seqkit`, `R`, `seqpy-tools` (run_command, setup_logging, get_read_ids2). **Python:** standard library.|
 | `decontam_module.py` | Host/contamination removal. Removes PhiX contamination, maps reads against a human reference, retains unmapped reads, and repairs paired-end files. Supports paired or merged reads and parallel processing. | `run_bbduk()` – removes PhiX with BBDuk; `run_bwa_mem_and_samtools()` – maps to human reference and extracts unmapped reads | **References**: PhiX genome and human GRCh38 reference FASTAs; **External**: `bbduk.sh`/`BBMap`, `bwa`, `samtools`, `seqpy-tools` (run_subprocess, repair_reads, get_read_ids2, find_paired_files2, find_single_reads, setup_logging). **Python**: `pandas` + standard library.|
-| `assembly_module.py` | Metagenomic assembly + assembly evaluation/correction. Runs one of MEGAHIT, MetaSPAdes or IDBA-UD, validates/restarts failed assemblies, optionally applies metaMIC correction, then evaluates assemblies with BUSCO and produces contig statistics with SeqFu. | Assembly: `run_megahit()`, `run_metaspades()`, `run_idba_ud()`. **Validation**: `assemblies_exist_for_all_samples()`, `check_assemblies()`, restart functions. **Correction:** `get_coverage_and_correct()`, `run_metamic_correction()`. **Evaluation**: `run_busco_parallel()`, `ensure_busco_lineage()`, `summarize_busco_json()`, `generate_seqfu_summary()`. | **External**: `megahit`/`metaspades`/`idba_ud`, `busco`, `seqfu`, `metaMIC`, `bwa`, `samtools`, `seqkit`, `awk`, `seqpy-tools` (find_single_reads, find_paired_files2, get_read_ids, get_read_ids2, find_program, setup_logging). **Python**: `pandas` + standard library.|                                                                                                                                                                                                                 || `cutadapt_module.py`   | Barcode demultiplexing and FASTQ sanitisation. Uses i5/i7 barcodes to demultiplex raw paired-end reads, sanitises reads, repairs pairing, and generates read statistics.               | `run_cutadapt()` – barcode-based demultiplexing; `seqkit_sanitize()` – sanitises FASTQs; `find_files()` – identifies R1/R2 pairs; `seqkit_pair()` – repairs/pairs reads; `generate_seqkit_stats()` – QC statistics. | **External:** `cutadapt`, `seqkit`, `seqpy-tools` (clean_and_tar, pair_input_files, check_and_handle_gunzipped). **Python:** `pandas`, `pgzip` and standard library. |
+| `assembly_module.py` | Metagenomic assembly + assembly evaluation/correction. Runs one of MEGAHIT, MetaSPAdes or IDBA-UD, validates/restarts failed assemblies, optionally applies metaMIC correction, then evaluates assemblies with BUSCO and produces contig statistics with SeqFu. | Assembly: `run_megahit()`, `run_metaspades()`, `run_idba_ud()`. **Validation**: `assemblies_exist_for_all_samples()`, `check_assemblies()`, restart functions. **Correction:** `get_coverage_and_correct()`, `run_metamic_correction()`. **Evaluation**: `run_busco_parallel()`, `ensure_busco_lineage()`, `summarize_busco_json()`, `generate_seqfu_summary()`. | **External**: `megahit`/`metaspades`/`idba_ud`, `busco`, `seqfu`, `metaMIC`, `bwa`, `samtools`, `seqkit`, `awk`, `seqpy-tools` (find_single_reads, find_paired_files2, get_read_ids, get_read_ids2, find_program, setup_logging). **Python**: `pandas` + standard library.|
+| `cutadapt_module.py`   | Barcode demultiplexing and FASTQ sanitisation. Uses i5/i7 barcodes to demultiplex raw paired-end reads, sanitises reads, repairs pairing, and generates read statistics.| `run_cutadapt()` – barcode-based demultiplexing; `seqkit_sanitize()` – sanitises FASTQs; `find_files()` – identifies R1/R2 pairs; `seqkit_pair()` – repairs/pairs reads; `generate_seqkit_stats()` – QC statistics. | **External:** `cutadapt`, `seqkit`, `seqpy-tools` (clean_and_tar, pair_input_files, check_and_handle_gunzipped). **Python:** `pandas`, `pgzip` and standard library. |
 
-
-### Modules
 
 ### Quick run modules
 
-### Outputs 
 
 ## Extra utility tools 
 
