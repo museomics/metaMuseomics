@@ -26,23 +26,13 @@ pip install
 
 ![Modules flowchart](https://github.com/museomics/metaMuseomics/blob/main/img/flowchart.svg)
 
+Module | Main function / role | Key functions | Dependencies |
+|---|---|---|---|
+`fastp_module.py` | Read preprocessing/QC. Trims and filters paired-end FASTQs, merges overlapping pairs, produces overlap plots, and creates summary statistics. Samples can be processed in parallel. | `run_fastp_trim()`: adapter/quality trimming, poly-G trimming and deduplication; `run_fastp_merge()`: merges paired reads; `run_fastp_overlap_plot()`: creates overlap HTML; `generate_seqkit_stats()`: FASTQ statistics; `run_fastp_json_merge()`: combines fastp JSON results via R; `process_sample()`: per-sample workflow | **External**: fastp, seqkit, R, seqpy-tools (run_command, setup_logging, get_read_ids2). **Python:** standard library.|
+`decontam_module.py` | Host/contamination removal. Removes PhiX contamination, maps reads against a human reference, retains unmapped reads, and repairs paired-end files. Supports paired or merged reads and parallel processing. | `run_bbduk()` – removes PhiX with BBDuk; `run_bwa_mem_and_samtools()` – maps to human reference and extracts unmapped reads | **References**: PhiX genome and human GRCh38 reference FASTAs; **External**: bbduk.sh/BBMap, bwa, samtools, seqpy-tools (run_subprocess, repair_reads, get_read_ids2, find_paired_files2, find_single_reads, setup_logging). **Python**: pandas + standard library.|
+`assembly_module.py` | Metagenomic assembly + assembly evaluation/correction. Runs one of MEGAHIT, MetaSPAdes or IDBA-UD, validates/restarts failed assemblies, optionally applies metaMIC correction, then evaluates assemblies with BUSCO and produces contig statistics with SeqFu. | Assembly: `run_megahit()`, `run_metaspades()`, `run_idba_ud()`. **Validation**: `assemblies_exist_for_all_samples()`, `check_assemblies()`, restart functions. **Correction:** `get_coverage_and_correct()`, `run_metamic_correction()`. **Evaluation**: `run_busco_parallel()`, `ensure_busco_lineage()`, `summarize_busco_json()`, `generate_seqfu_summary()`. | **External**: megahit/metaspades.py/idba_ud, busco, seqfu, metaMIC, bwa, samtools, seqkit, awk, seqpy-tools (find_single_reads, find_paired_files2, get_read_ids, get_read_ids2, find_program, setup_logging). **Python**: pandas + standard library.|
 
 ### Modules
-|Module| dependency | version | Citation|
-|---|---|---|---|
-|fastp_module.py | | | |
-| | | | |
-| | | | |
-| | | | |
-|decontam_module.py| | | |
-| | | | |
-| | | | |
-| | | | |
-|assembly_module.py | | | |
-| | | | |
-| | | | |
-| | | | |
-
 
 ### Quick run modules
 
