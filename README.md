@@ -6,8 +6,9 @@ Each module wraps commonly used tools into individual chunks that can be used in
 ## Contents
 
 1. [Getting started](#getting-started)
-2. [Individual Module Use](#individual-module-use)
-3. [Tutorials and Use Cases](https://github.com/Kamouyiaraki/metaMuseome/blob/main/Tutorial.md)
+2. [Individual Modules: Use & Details](#metamuseomics-modules)
+3. [Extra tools](#extra-utility-tools)
+4. [Tutorials and Use Cases](https://github.com/Kamouyiaraki/metaMuseome/blob/main/Tutorial.md)
 
    
 ## Getting started 
@@ -15,10 +16,15 @@ Each module wraps commonly used tools into individual chunks that can be used in
 ### Installation
 
 pip install
-conda install
 
-#### The dependencies: 
+### The dependencies: 
 
+
+
+
+## metaMuseomics Modules
+
+### Modules
 |Module| dependency | version | Citation|
 |---|---|---|---|
 |fastp_module.py | | | |
@@ -35,13 +41,11 @@ conda install
 | | | | |
 
 
-## Individual module use
-
 ### Quick run modules
 
 ### Outputs 
 
-### Extra utility tools 
+## Extra utility tools 
 
 
 ## References
