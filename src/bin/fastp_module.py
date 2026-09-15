@@ -6,7 +6,7 @@ import subprocess
 import argparse
 import shutil
 from pathlib import Path
-from metahist_tools import clean_and_tar, run_command, setup_logging, get_read_ids2
+from seqpy_tools import clean_and_tar, run_command, setup_logging, get_read_ids2
 
 ## Functions for fastp processing.
 ## This module performs initial trimming (with trimmed reads output),
