@@ -14,7 +14,7 @@ import gzip
 import shutil
 
 
-from metahist_tools import (
+from seqpy_tools import (
     find_single_reads,
     find_paired_files2,
     get_read_ids,
