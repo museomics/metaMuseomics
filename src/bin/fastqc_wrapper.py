@@ -6,7 +6,7 @@ import logging
 import pathlib
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
-from metahist_tools import pair_input_files, xlsx2csv
+from seqpy_tools import pair_input_files, xlsx2csv
 
 # Set up logging
 log_dir = "./logs"
