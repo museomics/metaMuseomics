@@ -8,9 +8,9 @@ import pandas as pd
 import re
 import argparse
 from pathlib import Path
-from metahist_tools import clean_and_tar
-from metahist_tools import pair_input_files
-from metahist_tools import check_and_handle_gunzipped
+from seqpy_tools import clean_and_tar
+from seqpy_tools import pair_input_files
+from seqpy_tools import check_and_handle_gunzipped
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Set up logger
