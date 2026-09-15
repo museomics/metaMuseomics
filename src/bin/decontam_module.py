@@ -6,7 +6,7 @@ import shutil
 import argparse
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from metahist_tools import run_subprocess, repair_reads, get_read_ids2, clean_and_tar, find_paired_files2, find_single_reads, setup_logging
+from seqpy_tools import run_subprocess, repair_reads, get_read_ids2, clean_and_tar, find_paired_files2, find_single_reads, setup_logging
 
 def run_bbduk(file_path, output_dir, temp_dir, phix_ref, logger):
     ''' Run BBDuk to remove PhiX contamination from a FASTQ file. '''
