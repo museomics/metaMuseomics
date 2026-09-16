@@ -115,7 +115,7 @@ def check_dependencies(params):
             "bwa",
             "samtools",
             "seqkit",
-            "seqfu"
+            "seqfu",
         })
         logger.info("Correction selected, checking dependencies...")
 
