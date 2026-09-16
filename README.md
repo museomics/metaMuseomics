@@ -7,7 +7,7 @@
 1. [Background](#background)
 2. [Getting started](#getting-started)
 4. [metaMuseomics Modules: Use & Details](#metamuseomics-modules)
-5. [Some extra utility tools](#extra-utility-tools)
+5. [Some extra utility tools](#extra-utility-tools-and-wrappers)
 6. [Example usage](#example-usage)
 7. [References](#references)
 
@@ -125,27 +125,57 @@ The modules are designed to be used either as independent tools or as part of a 
 
 ![Modules flowchart](https://github.com/museomics/metaMuseomics/blob/main/img/flowchart.svg)
 
-Module | Main function / role | Key functions | Dependencies |
-|---|---|---|---|
-| `nonpareil_module.py`  | Metagenomic sequencing-complexity estimation. Runs Nonpareil on FASTQ files and summarises coverage, redundancy, diversity and sequencing effort required for 95% coverage. | `run_nonpareil()` – runs Nonpareil per FASTQ; `parse_npo()` – extracts metrics from `.npo`; `batch_run_nonpareil()` – processes all matching FASTQs and creates summary CSV.| **External:** `nonpareil`. **Python:** standard library|
-| `fastp_module.py` | Read preprocessing/QC. Trims and filters paired-end FASTQs, merges overlapping pairs, produces overlap plots, and creates summary statistics. Samples can be processed in parallel. | `run_fastp_trim()`: adapter/quality trimming, poly-G trimming and deduplication; `run_fastp_merge()`: merges paired reads; `run_fastp_overlap_plot()`: creates overlap HTML; `generate_seqkit_stats()`: FASTQ statistics; `run_fastp_json_merge()`: combines fastp JSON results via R; `process_sample()`: per-sample workflow | **External**: `fastp`, `seqkit`, `R`. **Python:** standard library + `seqpy-tools`|
-| `decontam_module.py` | Host/contamination removal. Removes PhiX contamination, maps reads against a human reference, retains unmapped reads, and repairs paired-end files. Supports paired or merged reads and parallel processing. | `run_bbduk()` – removes PhiX with BBDuk; `run_bwa_mem_and_samtools()` – maps to human reference and extracts unmapped reads | **References**: PhiX genome and human GRCh38 reference FASTAs; **External**: `bbduk.sh`/`BBMap`, `bwa`, `samtools`. **Python**: `pandas`, `seqpy-tools` + standard library.|
-| `assembly_module.py` | Metagenomic assembly + assembly evaluation/correction. Runs one of MEGAHIT, MetaSPAdes or IDBA-UD, validates/restarts failed assemblies, optionally applies metaMIC correction, then evaluates assemblies with BUSCO and produces contig statistics with SeqFu. | Assembly: `run_megahit()`, `run_metaspades()`, `run_idba_ud()`. **Validation**: `assemblies_exist_for_all_samples()`, `check_assemblies()`, restart functions. **Correction:** `get_coverage_and_correct()`, `run_metamic_correction()`. **Evaluation**: `run_busco_parallel()`, `ensure_busco_lineage()`, `summarize_busco_json()`, `generate_seqfu_summary()`. | **External**: `megahit`/`metaspades`/`idba_ud`, `busco`, `seqfu`, `metaMIC`, `bwa`, `samtools`, `seqkit`. **Python**: `pandas`, `gzip`, `json`, `seqpy-tools` + standard library.|
-| `cutadapt_module.py`   | Barcode demultiplexing and FASTQ sanitisation. Uses i5/i7 barcodes to demultiplex raw paired-end reads, sanitises reads, repairs pairing, and generates read statistics.| `run_cutadapt()` – barcode-based demultiplexing; `seqkit_sanitize()` – sanitises FASTQs; `find_files()` – identifies R1/R2 pairs; `seqkit_pair()` – repairs/pairs reads; `generate_seqkit_stats()` – QC statistics. | **External:** `cutadapt`, `seqkit`. **Python:** `pandas`, `seqpy-tools`, `pgzip` and standard library. |
+|Function | Module | Main role | Key sub-functions | Dependencies |
+|---|---|---|---|---|
+|mm-nonpareil | `nonpareil_module.py`  | Metagenomic sequencing-complexity estimation. Runs Nonpareil on FASTQ files and summarises coverage, redundancy, diversity and sequencing effort required for 95% coverage. | `run_nonpareil()` – runs Nonpareil per FASTQ; `parse_npo()` – extracts metrics from `.npo`; `batch_run_nonpareil()` – processes all matching FASTQs and creates summary CSV.| **External:** `nonpareil`. **Python:** standard library|
+|mm-fastp | `fastp_module.py` | Read preprocessing/QC. Trims and filters paired-end FASTQs, merges overlapping pairs, produces overlap plots, and creates summary statistics. Samples can be processed in parallel. | `run_fastp_trim()`: adapter/quality trimming, poly-G trimming and deduplication; `run_fastp_merge()`: merges paired reads; `run_fastp_overlap_plot()`: creates overlap HTML; `generate_seqkit_stats()`: FASTQ statistics; `run_fastp_json_merge()`: combines fastp JSON results via R; `process_sample()`: per-sample workflow | **External**: `fastp`, `seqkit`, `R`. **Python:** standard library + `seqpy-tools`|
+|mm-decontam| `decontam_module.py` | Host/contamination removal. Removes PhiX contamination, maps reads against a human reference, retains unmapped reads, and repairs paired-end files. Supports paired or merged reads and parallel processing. | `run_bbduk()` – removes PhiX with BBDuk; `run_bwa_mem_and_samtools()` – maps to human reference and extracts unmapped reads | **References**: PhiX genome and human GRCh38 reference FASTAs; **External**: `bbduk.sh`/`BBMap`, `bwa`, `samtools`. **Python**: `pandas`, `seqpy-tools` + standard library.|
+|mm-assembly| `assembly_module.py` | Metagenomic assembly + assembly evaluation/correction. Runs one of MEGAHIT, MetaSPAdes or IDBA-UD, validates/restarts failed assemblies, optionally applies metaMIC correction, then evaluates assemblies with BUSCO and produces contig statistics with SeqFu. | Assembly: `run_megahit()`, `run_metaspades()`, `run_idba_ud()`. **Validation**: `assemblies_exist_for_all_samples()`, `check_assemblies()`, restart functions. **Correction:** `get_coverage_and_correct()`, `run_metamic_correction()`. **Evaluation**: `run_busco_parallel()`, `ensure_busco_lineage()`, `summarize_busco_json()`, `generate_seqfu_summary()`. | **External**: `megahit`/`metaspades`/`idba_ud`, `busco`, `seqfu`, `metaMIC`, `bwa`, `samtools`, `seqkit`. **Python**: `pandas`, `gzip`, `json`, `seqpy-tools` + standard library.|
+|mm-cutadapt| `cutadapt_module.py`   | Barcode demultiplexing and FASTQ sanitisation. Uses i5/i7 barcodes to demultiplex raw paired-end reads, sanitises reads, repairs pairing, and generates read statistics.| `run_cutadapt()` – barcode-based demultiplexing; `seqkit_sanitize()` – sanitises FASTQs; `find_files()` – identifies R1/R2 pairs; `seqkit_pair()` – repairs/pairs reads; `generate_seqkit_stats()` – QC statistics. | **External:** `cutadapt`, `seqkit`. **Python:** `pandas`, `seqpy-tools`, `pgzip` and standard library. |
 
 
 ## Extra utility tools and wrappers
 
 Module | Main role | Key functions | Dependencies |
 |---|---|---|---|
-| `busco_wrapper.py` | BUSCO summary. Finds existing assemblies, runs BUSCO, summarises BUSCO results in a spreadhseet. This is the same process that occurs in the assembly module, but made available for independent use outside of the assembly step. | `run_busco`: runs BUSCO on found assemblies. `collect_busco_summary()`: collects BUSCO outputs and summarises into a spreadsheet. | **External:** `BUSCO`. **Python:** standard library, `json` + `pandas` |
-| `fastqc_wrapper.py` | Raw-read quality control. Finds paired FASTQs using a tracking sheet, sample prefix/suffix, or all files, then runs FastQC on each pair.| `run_fastqc()`: executes FastQC.| **External:** `fastqc`. **Python:**  standard library, `pandas` +  `seqpy-tools`.|  
-| `kraken2_wrapper.py` | Kraken2 taxonomic classification on multiple FASTA samples in parallel. It includes functions for processing samples, running Kraken2, and outputs FASTAs grouped by Family (other ranks for future development). |  `run_kraken()`: wrapper to run kraken2 with any specified DB; `taxid_to_family()`: uses tax IDs to find Family rank, `write_family_fastas()`: outputs FASTAs of all contigs belonging to the same Family| **External**: `Kraken2`, **Python**: standard library. |
-| `ids2csv.py`| Sample metadata to FASTQ path mapping. Takes sample IDs from a CSV, searches a project directory for corresponding trimmed paired FASTQs, and adds `forward`/`reverse` path columns.    | `get_ids()`: extracts IDs from CSV; `find_files()`: locates matching R1/R2 FASTQs; `write_to_csv()`: adds paths and writes the output CSV.| **Python:**  standard library. |
+|mm-busco| `busco_wrapper.py` | BUSCO summary. Finds existing assemblies, runs BUSCO, summarises BUSCO results in a spreadhseet. This is the same process that occurs in the assembly module, but made available for independent use outside of the assembly step. | `run_busco`: runs BUSCO on found assemblies. `collect_busco_summary()`: collects BUSCO outputs and summarises into a spreadsheet. | **External:** `BUSCO`. **Python:** standard library, `json` + `pandas` |
+|mm-fastqc| `fastqc_wrapper.py` | Raw-read quality control. Finds paired FASTQs using a tracking sheet, sample prefix/suffix, or all files, then runs FastQC on each pair.| `run_fastqc()`: executes FastQC.| **External:** `fastqc`. **Python:**  standard library, `pandas` +  `seqpy-tools`.|  
+|mm-kraken2| `kraken2_wrapper.py` | Kraken2 taxonomic classification on multiple FASTA samples in parallel. It includes functions for processing samples, running Kraken2, and outputs FASTAs grouped by Family (other ranks for future development). |  `run_kraken()`: wrapper to run kraken2 with any specified DB; `taxid_to_family()`: uses tax IDs to find Family rank, `write_family_fastas()`: outputs FASTAs of all contigs belonging to the same Family| **External**: `Kraken2`, **Python**: standard library. |
+|mm-ids2csv| `ids2csv.py`| Sample metadata to FASTQ path mapping. Takes sample IDs from a CSV, searches a project directory for corresponding trimmed paired FASTQs, and adds `forward`/`reverse` path columns.    | `get_ids()`: extracts IDs from CSV; `find_files()`: locates matching R1/R2 FASTQs; `write_to_csv()`: adds paths and writes the output CSV.| **Python:**  standard library. |
 |`parse_fastp_json.R` | Parse JSON files into a summary CSV file after fastp trimming. This is coded into the fastp module but can be used as a standalone tool. | `json_parse()`: takes all JSON files, reads, extracts primary information and outputs into a dataframe that is then exported as a CSV| `R` (jsonlite)|
-| `setup_library_dir.py` | Library/project data setup. Downloads sequencing files from URLs, validates MD5 checksums, extracts TAR archives, moves FASTQs into `raw_data`, and cleans up the resulting directory. | `download_file()` – downloads individual files with `wget`; top-level script handles URL parsing, directory creation, checksum validation, TAR extraction and file organisation.|**Python:** standard library|
+|mm-setup-library-dir| `setup_library_dir.py` | Library/project data setup. Downloads sequencing files from URLs, validates MD5 checksums, extracts TAR archives, moves FASTQs into `raw_data`, and cleans up the resulting directory. | `download_file()` – downloads individual files with `wget`; top-level script handles URL parsing, directory creation, checksum validation, TAR extraction and file organisation.|**Python:** standard library|
 
 ## Example usage
+
+Each module and script has it's own parameters. This is an example of basic usage:
+
+```
+Example usage: 
+# Download raw data from sequencing company and flatten directory structure
+mm-setup-library PRJXXXXX ./download-links.csv --url_id raw_data
+
+
+# Run FastQC on all samples to check the libraries
+cd ./PRJXXXXX
+mm-fastqc --input_dir raw_data --output_dir fastqc_out
+
+# QC, trim and merge the data using the fastp module
+mm-fastp --input raw_data --output_dir fastp_processed --tracking_sheet Library_tracking_sheet.csv --prefix IDT --column_name Sample_ID --fastp_extra_args 
+
+# Assess library complexity using reference-free nonpareil
+mm-nonpareil -i fastp_processed -o nonpareil_out/ -R 100000
+
+# Decontaminate data using the 
+mm-decontam --input_dir fastp_processed --output_dir decontaminated_dir --suffix merged --merged
+
+# Assemble the data
+mm-assembly --input_dir decontaminated_dir --merged --assembler megahit --output_dir megahit_out --correction --merged_suffix merged --paired_suffix trimmed
+
+# Classify output scaffolds
+mm-kraken2 --input_dir ./megahit_out/ --filename final.contigs.fa --kraken_db ./fungi_db/ --output_dir ./kraken2_out_fungaldb/ --workers 8
+
+```
+
 
 ## References
 - Simon Andrews, 2010. FastQC:  A Quality Control Tool for High Throughput Sequence Data [Online]. Available online at: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
