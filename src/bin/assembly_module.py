@@ -115,6 +115,7 @@ def check_dependencies(params):
             "bwa",
             "samtools",
             "seqkit",
+            "seqfu"
         })
         logger.info("Correction selected, checking dependencies...")
 
@@ -765,7 +766,7 @@ def run_metaspades_restart(output_dir, sample_id):
     '''Rerun metaspades with --continue flag in case failure was due to interruption.'''
 
     cmd = [
-        "metaspades",
+        "metaspades.py",
         "--continue", 
         "-o", output_dir
     ]
