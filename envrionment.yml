@@ -1,0 +1,31 @@
+name: metamuseomics
+
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - python=3.12
+
+  # Bioinformatics tools
+  - fastp
+  - fastqc
+  - cutadapt
+  - seqkit
+  - bwa
+  - samtools
+  - megahit
+  - idba_ud
+  - nonpareil
+  - spades
+  - busco
+  - kraken2
+  - R
+  - bbmap
+  - seqfu
+  - cutadapt
+
+  # Install the Python package
+  - pip
+  - pip:
+      - metaMuseomics
