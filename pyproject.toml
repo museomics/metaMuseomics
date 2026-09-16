@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metaMuseomics"
+version = "0.1.0"
+description = "A collection of Python modules and wrappers for use in historical metagenome assembly and analyses. Designed in mind for pipeline use, but can be used as customisable standalone tools."
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+    "pandas",
+    "pgzip",
+    "seqpy-tools"
+]
+
+authors = [
+    {name = "Maria Kamouyiaros"}
+]
+
+[project.urls]
+Homepage = "https://github.com/museomics/metaMuseomics"
+Repository = "https://github.com/museomics/metaMuseomics"
+Issues = "https://github.com/museomics/metaMuseomics/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+metamuseomics = [
+    "r_scripts/**/*.R",
+]
