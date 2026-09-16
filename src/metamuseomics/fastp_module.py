@@ -7,6 +7,7 @@ import argparse
 import shutil
 from pathlib import Path
 from seqpy_tools import clean_and_tar, run_command, setup_logging, get_read_ids2
+from importlib.resources import files
 
 ## Functions for fastp processing.
 ## This module performs initial trimming (with trimmed reads output),
@@ -181,12 +182,16 @@ def main(args):
 
     pattern = os.path.join(args.output_dir, "**", "*_trim.json")
     json_paths = glob.glob(pattern, recursive=True)
+    r_path = files("metamuseomics").joinpath(
+    "r_scripts",
+    "parse_fastp_json.R",
+)
+
     if not json_paths:
         raise FileNotFoundError(f"No *_trim.json files found under {args.output_dir}")
     run_fastp_json_merge(
         os.path.dirname(json_paths[0]),
-        r_script="/mnt/shared/scratch/mkamouyi/private/defra-fungi/PRJEB81712/parse_fastp_json.R",
-        logger=logger,
+        r_script=r_path,
         output_file=os.path.join(args.output_dir, "combined_fastp_json_out.csv")
     )
     
