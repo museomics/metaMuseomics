@@ -76,6 +76,8 @@ pip install
 
 ## metaMuseomics Modules
 
+The modules are designed to be used either as independent tools or as part of a metagenomic pipeline for historical (maybe museum-derived) data, as shown below.
+
 ![Modules flowchart](https://github.com/museomics/metaMuseomics/blob/main/img/flowchart.svg)
 
 Module | Main function / role | Key functions | Dependencies |
