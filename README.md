@@ -136,8 +136,8 @@ The modules are designed to be used either as independent tools or as part of a 
 
 ## Extra utility tools and wrappers
 
-Module | Main role | Key functions | Dependencies |
-|---|---|---|---|
+|Function | Module | Main role | Key sub-functions | Dependencies |
+|---|---|---|---|---|
 |mm-busco| `busco_wrapper.py` | BUSCO summary. Finds existing assemblies, runs BUSCO, summarises BUSCO results in a spreadhseet. This is the same process that occurs in the assembly module, but made available for independent use outside of the assembly step. | `run_busco`: runs BUSCO on found assemblies. `collect_busco_summary()`: collects BUSCO outputs and summarises into a spreadsheet. | **External:** `BUSCO`. **Python:** standard library, `json` + `pandas` |
 |mm-fastqc| `fastqc_wrapper.py` | Raw-read quality control. Finds paired FASTQs using a tracking sheet, sample prefix/suffix, or all files, then runs FastQC on each pair.| `run_fastqc()`: executes FastQC.| **External:** `fastqc`. **Python:**  standard library, `pandas` +  `seqpy-tools`.|  
 |mm-kraken2| `kraken2_wrapper.py` | Kraken2 taxonomic classification on multiple FASTA samples in parallel. It includes functions for processing samples, running Kraken2, and outputs FASTAs grouped by Family (other ranks for future development). |  `run_kraken()`: wrapper to run kraken2 with any specified DB; `taxid_to_family()`: uses tax IDs to find Family rank, `write_family_fastas()`: outputs FASTAs of all contigs belonging to the same Family| **External**: `Kraken2`, **Python**: standard library. |
