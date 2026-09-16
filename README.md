@@ -63,11 +63,11 @@ SeqFu is run once across all successful contig FASTAs with GC and CSV output ena
 ## Contents
 
 1. [Getting started](#getting-started)
-2. [Individual Modules: Use & Details](#metamuseomics-modules)
-3. [Extra tools](#extra-utility-tools)
-4. [Tutorials and Use Cases](https://github.com/Kamouyiaraki/metaMuseome/blob/main/Tutorial.md)
+2. [metaMuseomics Modules: Use & Details](#metamuseomics-modules)
+3. [Some extra utility tools](#extra-utility-tools)
+4. [Example usage](#example-usage)
+5. [References](#references)
 
-   
 ## Getting started 
 
 ### Installation
@@ -89,9 +89,6 @@ Module | Main function / role | Key functions | Dependencies |
 | `cutadapt_module.py`   | Barcode demultiplexing and FASTQ sanitisation. Uses i5/i7 barcodes to demultiplex raw paired-end reads, sanitises reads, repairs pairing, and generates read statistics.| `run_cutadapt()` – barcode-based demultiplexing; `seqkit_sanitize()` – sanitises FASTQs; `find_files()` – identifies R1/R2 pairs; `seqkit_pair()` – repairs/pairs reads; `generate_seqkit_stats()` – QC statistics. | **External:** `cutadapt`, `seqkit`, `seqpy-tools` (clean_and_tar, pair_input_files, check_and_handle_gunzipped). **Python:** `pandas`, `pgzip` and standard library. |
 
 
-### Quick run modules
-
-
 ## Extra utility tools and wrappers
 
 Module | Main role | Key functions | Dependencies |
@@ -102,6 +99,8 @@ Module | Main role | Key functions | Dependencies |
 | `ids2csv.py`| Sample metadata to FASTQ path mapping. Takes sample IDs from a CSV, searches a project directory for corresponding trimmed paired FASTQs, and adds `forward`/`reverse` path columns.    | `get_ids()`: extracts IDs from CSV; `find_files()`: locates matching R1/R2 FASTQs; `write_to_csv()`: adds paths and writes the output CSV.| **Python:**  standard library. |
 |`parse_fastp_json.R` | Parse JSON files into a summary CSV file after fastp trimming. This is coded into the fastp module but can be used as a standalone tool. | `json_parse()`: takes all JSON files, reads, extracts primary information and outputs into a dataframe that is then exported as a CSV| `R` (jsonlite)|
 | `setup_library_dir.py` | Library/project data setup. Downloads sequencing files from URLs, validates MD5 checksums, extracts TAR archives, moves FASTQs into `raw_data`, and cleans up the resulting directory. | `download_file()` – downloads individual files with `wget`; top-level script handles URL parsing, directory creation, checksum validation, TAR extraction and file organisation.| **External:** `wget`, `md5sum`, `tar`. **Python:** standard library|
+
+## Example usage
 
 ## References
 - Simon Andrews, 2010. FastQC:  A Quality Control Tool for High Throughput Sequence Data [Online]. Available online at: http://www.bioinformatics.babraham.ac.uk/projects/fastqc/
