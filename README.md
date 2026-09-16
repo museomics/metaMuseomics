@@ -6,10 +6,10 @@
 
 1. [Background](#background)
 2. [Getting started](#getting-started)
-3. [metaMuseomics Modules: Use & Details](#metamuseomics-modules)
-4. [Some extra utility tools](#extra-utility-tools)
-5. [Example usage](#example-usage)
-6. [References](#references)
+4. [metaMuseomics Modules: Use & Details](#metamuseomics-modules)
+5. [Some extra utility tools](#extra-utility-tools)
+6. [Example usage](#example-usage)
+7. [References](#references)
 
 ## Background
 
@@ -76,7 +76,43 @@ SeqFu is run once across all successful contig FASTAs with GC and CSV output ena
 
 ### Installation
 
-pip install
+There are two installation options: 
+
+Option A) To install the python package only (assuming you have bioinformatics software already installed) run: 
+
+```
+python3.12 -m pip install metaMuseomics
+```
+
+Option B) To install a complete conda environment, run:  
+
+```
+conda env create -f environment.yml
+conda activate metamuseomics
+```
+
+If you are planning on using the decontaminate module, then run the following in the directory above your working directory to download the reference sequences (HG38 *Homo sapiens* reference genome GRCh38.p14 (GCF_000001405.40) & PhiX NC_001422.1) used: 
+
+```
+mkdir ref
+cd ./ref
+
+# PhiX
+wget ftp://ftp.ncbi.nlm.nih.gov/genomes/genbank/viral/Sinsheimervirus_phiX174/latest_assembly_versions/GCA_000819615.1_ViralProj14015/GCA_000819615.1_ViralProj14015_genomic.fna.gz
+
+# Homo sapiens 
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.fna.gz
+gunzip GCF_000001405.40_GRCh38.p14_genomic.fna.gz
+bwa index GCF_000001405.40_GRCh38.p14_genomic.fna
+```
+
+Alternatively, you can specify your reference sequences using the arguments `--phiX_ref` and `--human-ref`. 
+
+In theory any reference can be used in place of either, however you should keep in mind that as the PhiX genome is so small, `bbduk.sh` from BBTools is used, while BWA MEM is used for the much larger (and more resource intense) `--human-ref`. 
+
+**Important note on IDBA-UD:**
+[IDBA-UD](https://github.com/loneknightpy/idba) may throw an error in the presence of short insert sizes. A solution to this has been made available [here](https://www.seqanswers.com/forum/bioinformatics/bioinformatics-aa/24625-250bp-reads-in-idba_ud). 
+
 
 ## metaMuseomics Modules
 
