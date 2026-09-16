@@ -15,7 +15,7 @@ The decontam module is designed to use references to remove any potential reads 
 The important point is that PhiX removal happens before human decontamination, and the two stages are separately parallelised across files, so that there are separate outputs for each stage. 
 
 ### 3. `assembly_module.py`
-This is substantially larger than the other two modules: it combines assembly (with 3 assembler options: MEGAHIT, MetaSPADEs, IDBA-UD), validation/restarts, optional metaMIC correction, BUSCO assessment and SeqFu statistics.
+This is substantially larger than the other two modules: it combines assembly (with 3 assembler options: MEGAHIT, MetaSPADEs, IDBA-UD), validation/restarts, optional metaMIC correction, BUSCO assessment and SeqFu statistics. In essence `assembly_module.py` is really three pipelines in one: **assembly → optional correction → evaluation/reporting.**
 
 In the first step, assembly happens with the chosen assembler. IDBA-UD first converts paired FASTQs into an interleaved FASTA using fq2fa; merged FASTQ can also be converted to FASTA. MEGAHIT supports three modes in the wrapper: merged reads only, paired reads only, or merged + paired reads.
 
