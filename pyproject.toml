@@ -31,3 +31,16 @@ where = ["src"]
 metamuseomics = [
     "r_scripts/**/*.R",
 ]
+
+[project.scripts]
+mm-setup-library = "metamuseomics.setup_library_dir:main"
+mm-fastqc = "metamuseomics.fastqc_wrapper:main"
+mm-fastp = "metamuseomics.fastp_module:main"
+mm-decontam = "metamuseomics.decontam_module:main"
+mm-nonpareil = "metamuseomics.nonpareil_module:main"
+mm-assembly = "metamuseomics.assembly_module:main"
+mm-kraken2 = "metamuseomics.kraken2_wrapper:main"
+mm-busco = "metamuseomics.busco_wrapper:main"
+mm-cutadapt = "metamuseomics.cutadapt_module:main"
+mm-ids2csv = "metamuseomics.ids2csv:main"
+mm-binning = "metamuseomics.binning_module:main"
