@@ -69,7 +69,6 @@ Finally, assemblies are assessed using BUSCO. BUSCO uses the selected lineage, d
 
 SeqFu is run once across all successful contig FASTAs with GC and CSV output enabled.
 
-
 *Note: The assembly module uses process-level parallelism, whereas the preprocessing/decontamination modules use thread pools. This is mainly due to the relatively heavyweight assembler/BUSCO processes versus the lighter orchestration around external commands.*
 
 ## Getting started 
@@ -110,9 +109,15 @@ Alternatively, you can specify your reference sequences using the arguments `--p
 
 In theory any reference can be used in place of either, however you should keep in mind that as the PhiX genome is so small, `bbduk.sh` from BBTools is used, while BWA MEM is used for the much larger (and more resource intense) `--human-ref`. 
 
-**Important note on IDBA-UD:**
+
+#### Important notes on certain packages and use cases: 
+
+**IDBA-UD:**
 [IDBA-UD](https://github.com/loneknightpy/idba) may throw an error in the presence of short insert sizes. A solution to this has been made available [here](https://www.seqanswers.com/forum/bioinformatics/bioinformatics-aa/24625-250bp-reads-in-idba_ud). 
 
+
+**metaMIC**
+[metaMIC](https://github.com/ZhaoXM-Lab/metaMIC) is not a conda/bioconda package and requires it's own installation steps. Please consult their how-to guide for instructions on this. The use of metaMIC is an optional part of the assembly module activated with the flag `--correction`. This can be skipped if rounds of correction are not neccessary/wanted.  
 
 ## metaMuseomics Modules
 
