@@ -90,12 +90,13 @@ Module | Main function / role | Key functions | Dependencies |
 ### Quick run modules
 
 
-## Extra utility tools 
+## Extra utility tools and wrappers
 
 Module | Main role | Key functions | Dependencies |
 |---|---|---|---|
 | `busco_wrapper.py` | BUSCO summary. Finds existing assemblies, runs BUSCO, summarises BUSCO results in a spreadhseet. This is the same process that occurs in the assembly module, but made available for independent use outside of the assembly step. | `run_busco`: runs BUSCO on found assemblies. `collect_busco_summary()`: collects BUSCO outputs and summarises into a spreadsheet. | **External:** `BUSCO`. **Python:** standard library, `json` + `pandas` |
 | `fastqc_wrapper.py` | Raw-read quality control. Finds paired FASTQs using a tracking sheet, sample prefix/suffix, or all files, then runs FastQC on each pair.| `run_fastqc()`: executes FastQC.| **External:** `fastqc`, `seqpy-tools` (`pair_input_files`, `xlsx2csv`). **Python:**  standard library + `pandas`.|  
+| `kraken2_wrapper.py` | Kraken2 taxonomic classification on multiple FASTA samples in parallel. It includes functions for processing samples, running Kraken2, and outputs FASTAs grouped by Family (other ranks for future development). |  `run_kraken()`: wrapper to run kraken2 with any specified DB; `taxid_to_family()`: uses tax IDs to find Family rank, `write_family_fastas()`: outputs FASTAs of all contigs belonging to the same Family| **External**: `Kraken2`, **Python**: standard library. |
 | `ids2csv.py`| Sample metadata to FASTQ path mapping. Takes sample IDs from a CSV, searches a project directory for corresponding trimmed paired FASTQs, and adds `forward`/`reverse` path columns.    | `get_ids()`: extracts IDs from CSV; `find_files()`: locates matching R1/R2 FASTQs; `write_to_csv()`: adds paths and writes the output CSV.| **Python:**  standard library. |
 |`parse_fastp_json.R` | Parse JSON files into a summary CSV file after fastp trimming. This is coded into the fastp module but can be used as a standalone tool. | `json_parse()`: takes all JSON files, reads, extracts primary information and outputs into a dataframe that is then exported as a CSV| `R` (jsonlite)|
 | `setup_library_dir.py` | Library/project data setup. Downloads sequencing files from URLs, validates MD5 checksums, extracts TAR archives, moves FASTQs into `raw_data`, and cleans up the resulting directory. | `download_file()` – downloads individual files with `wget`; top-level script handles URL parsing, directory creation, checksum validation, TAR extraction and file organisation.| **External:** `wget`, `md5sum`, `tar`. **Python:** standard library|
