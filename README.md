@@ -1,5 +1,17 @@
 # metaMuseomics
-Python package of scripts for use in metagenomic assembly and analysis of degraded, metagenomic samples common in museum specimen.
+
+*Python tools and modules for use in metagenomic assembly and analysis of degraded, metagenomic samples common in museum specimen.*
+
+## Contents
+
+1. [Background](#background)
+2. [Getting started](#getting-started)
+3. [metaMuseomics Modules: Use & Details](#metamuseomics-modules)
+4. [Some extra utility tools](#extra-utility-tools)
+5. [Example usage](#example-usage)
+6. [References](#references)
+
+## Background
 
 There are 3 main modules, plus a suite of supplementary modules that can be used in a comprehensive pipeline. Each module wraps commonly used metagenomics tools into individual chunks that can be used in isolation where needed or as part of an automated pipeline. The main purpose of each module is to have optimised parameters specifically for dealing with hDNA. 
 
@@ -59,14 +71,6 @@ SeqFu is run once across all successful contig FASTAs with GC and CSV output ena
 
 
 *Note: The assembly module uses process-level parallelism, whereas the preprocessing/decontamination modules use thread pools. This is mainly due to the relatively heavyweight assembler/BUSCO processes versus the lighter orchestration around external commands.*
-
-## Contents
-
-1. [Getting started](#getting-started)
-2. [metaMuseomics Modules: Use & Details](#metamuseomics-modules)
-3. [Some extra utility tools](#extra-utility-tools)
-4. [Example usage](#example-usage)
-5. [References](#references)
 
 ## Getting started 
 
