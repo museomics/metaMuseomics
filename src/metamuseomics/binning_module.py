@@ -3,7 +3,7 @@ import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from metahist_tools import setup_logging, run_subprocess, find_program, find_paired_files2
+from seqpy_tools import setup_logging, run_subprocess, find_program, find_paired_files2
 
 """
 Module for multi-sample metagenomic binning that uses fairy, samtools and bedtools for coverage estimation and 
