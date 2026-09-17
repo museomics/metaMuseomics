@@ -15,6 +15,8 @@
 
 There are 3 main modules, plus a suite of supplementary modules that can be used in a comprehensive pipeline. Each module wraps commonly used metagenomics tools into individual chunks that can be used in isolation where needed or as part of an automated pipeline. The main purpose of each module is to have optimised parameters specifically for dealing with hDNA. 
 
+*A fourth module (`binning_module.py`) is also included as part of this package, but it has not been tested thoroughly on real data - so proceed with caution knowing there's a likelihood it'll break!*
+
 ### 1. `fastp_module.py`
 
 Performs initial adapter/quality trimming, poly-G trimming, correction and deduplication in a first step. This trimming step outputs separate stats summaries and an overlap summary. The output files of this first step are then used to merge reads, before a last round of summaries are generated. 
@@ -70,6 +72,25 @@ Finally, assemblies are assessed using BUSCO. BUSCO uses the selected lineage, d
 SeqFu is run once across all successful contig FASTAs with GC and CSV output enabled.
 
 *Note: The assembly module uses process-level parallelism, whereas the preprocessing/decontamination modules use thread pools. This is mainly due to the relatively heavyweight assembler/BUSCO processes versus the lighter orchestration around external commands.*
+
+## 4. `binning_module.py` (in development)
+
+This module is a parallel, per-sample metagenomic binning pipeline.
+
+For each sample, it:
+1. Finds the expected assembly file based on the selected assembler.
+2. Finds paired reads and maps them to the assembly with BWA.
+3. Generates BAM and pileup coverage files using Samtools.
+4. Runs any or all selected binners:
+   - MetaDecoder
+   - MetaBAT2
+   - CONCOCT
+   - MaxBin2
+   - SemiBin2
+5. Converts bin FASTA files into contig-to-bin tables.
+6. Runs DAS Tool to optimise binning results if multiple binners are used.
+
+ *It has not been tested thoroughly on real data - so proceed with caution knowing there's a likelihood it'll break!*
 
 ## Getting started 
 
@@ -132,7 +153,7 @@ The modules are designed to be used either as independent tools or as part of a 
 |mm-decontam| `decontam_module.py` | Host/contamination removal. Removes PhiX contamination, maps reads against a human reference, retains unmapped reads, and repairs paired-end files. Supports paired or merged reads and parallel processing. | `run_bbduk()` – removes PhiX with BBDuk; `run_bwa_mem_and_samtools()` – maps to human reference and extracts unmapped reads | **References**: PhiX genome and human GRCh38 reference FASTAs; **External**: `bbduk.sh`/`BBMap`, `bwa`, `samtools`. **Python**: `pandas`, `seqpy-tools` + standard library.|
 |mm-assembly| `assembly_module.py` | Metagenomic assembly + assembly evaluation/correction. Runs one of MEGAHIT, MetaSPAdes or IDBA-UD, validates/restarts failed assemblies, optionally applies metaMIC correction, then evaluates assemblies with BUSCO and produces contig statistics with SeqFu. | Assembly: `run_megahit()`, `run_metaspades()`, `run_idba_ud()`. **Validation**: `assemblies_exist_for_all_samples()`, `check_assemblies()`, restart functions. **Correction:** `get_coverage_and_correct()`, `run_metamic_correction()`. **Evaluation**: `run_busco_parallel()`, `ensure_busco_lineage()`, `summarize_busco_json()`, `generate_seqfu_summary()`. | **External**: `megahit`/`metaspades`/`idba_ud`, `busco`, `seqfu`, `metaMIC`, `bwa`, `samtools`, `seqkit`. **Python**: `pandas`, `gzip`, `json`, `seqpy-tools` + standard library.|
 |mm-cutadapt| `cutadapt_module.py`   | Barcode demultiplexing and FASTQ sanitisation. Uses i5/i7 barcodes to demultiplex raw paired-end reads, sanitises reads, repairs pairing, and generates read statistics.| `run_cutadapt()` – barcode-based demultiplexing; `seqkit_sanitize()` – sanitises FASTQs; `find_files()` – identifies R1/R2 pairs; `seqkit_pair()` – repairs/pairs reads; `generate_seqkit_stats()` – QC statistics. | **External:** `cutadapt`, `seqkit`. **Python:** `pandas`, `seqpy-tools`, `pgzip` and standard library. |
-
+|mm-binning| `binning_module.py` | Multi-binner pipeline that includes DAS Tools comparison| `get_coverage()`, `concoct_coverage_file()`, `fairy_coverage()`, `process_sample()` |**External**: `bwa`, `samtools`, `awk`, `fairy`, `bedtools`, `concoct`, `run_MaxBin.pl`, `metabat2`, `SemiBin2`, `metadecoder`, `DAS_Tool.` **Python**: `pgzip`, `pandas`, `seqpy-tools` + standard library. |
 
 ## Extra utility tools and wrappers
 
