@@ -14,6 +14,8 @@ dependencies:
   - seqkit
   - bwa
   - samtools
+  - bedtools
+  - awk
   - megahit
   - idba_ud
   - nonpareil
@@ -24,6 +26,12 @@ dependencies:
   - bbmap
   - seqfu
   - cutadapt
+  - maxbin
+  - metabat2
+  - semibin
+  - concoct
+  - metadecoder
+  - das_tool
 
   # Install the Python package
   - pip
