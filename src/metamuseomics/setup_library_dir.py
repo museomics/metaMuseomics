@@ -1,12 +1,24 @@
+```python
 import shutil
-import os
 import subprocess
 from pathlib import Path
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Helper function to download one file
+
+def run_cmd(cmd, cwd=None):
+    """Run a command and return (success: bool)."""
+    try:
+        subprocess.run(cmd, cwd=cwd, check=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Command failed: {' '.join(cmd)} in {cwd}\n{e}")
+        return False
+
+
 def download_file(url: str, output_dir: Path):
+    """Download a file with resume support."""
+    print(f"Downloading: {url}")
     try:
         subprocess.run(
             ["wget", "-c", url, "-P", str(output_dir)],
@@ -14,113 +26,157 @@ def download_file(url: str, output_dir: Path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        print(f"Downloaded: {url}")
+        print(f"Finished: {url}")
     except subprocess.CalledProcessError as e:
         print(f"Download failed for {url}: {e}")
         raise
 
-# Parse command-line arguments
-parser = argparse.ArgumentParser(description="Process and organize sequencing files.")
-parser.add_argument("master_dir", type=str, help="Path to the master directory where files will be processed.")
-parser.add_argument("links_file", type=str, help="Path to the links.csv file containing download URLs.")
-parser.add_argument("--url_id", type=str, default=None, help="Optional ID for the subdirectory. If not provided, it will be extracted from the first URL in links_file.")
-parser.add_argument("--threads", type=int, default=4, help="Number of parallel downloads to run.")
-args = parser.parse_args()
 
-# Convert arguments to Path objects
-master_dir = Path(args.master_dir)
-links_file = Path(args.links_file)
+def main():
+    parser = argparse.ArgumentParser(
+        description="Recoverable downloader / extractor."
+    )
+    parser.add_argument("master_dir", type=str)
+    parser.add_argument("links_file", type=str)
+    parser.add_argument("--url_id", type=str, default=None)
+    parser.add_argument("--threads", type=int, default=4)
 
-# Validate the links_file
-if not links_file.exists() or links_file.stat().st_size == 0:
-    raise ValueError(f"The specified links file '{links_file}' is missing or empty.")
+    args = parser.parse_args()
 
-# Read all URLs
-with links_file.open("r") as f:
-    urls = [line.strip() for line in f if line.strip()]
+    master_dir = Path(args.master_dir)
+    links_file = Path(args.links_file)
 
-if not urls:
-    raise ValueError(f"The links file '{links_file}' contains no valid URLs.")
-
-# Determine the URL ID
-if args.url_id:
-    url_id = args.url_id
-else:
-    url_id = Path(urls[0]).stem.split('_')[0]  # Get the part before '_'
-
-# Create directories
-sub_dir = master_dir / url_id
-raw_data_dir = sub_dir / "raw_data"  # Directory to store all .fq.gz files
-raw_data_dir.mkdir(parents=True, exist_ok=True)
-
-# Download files in parallel
-print(f"Starting parallel downloads with {args.threads} threads...")
-with ThreadPoolExecutor(max_workers=args.threads) as executor:
-    future_to_url = {executor.submit(download_file, url, sub_dir): url for url in urls}
-    for future in as_completed(future_to_url):
-        url = future_to_url[future]
-        try:
-            future.result()
-        except Exception:
-            print(f"Error occurred while downloading {url}")
-
-print("All downloads completed.")
-
-# Run MD5 checksum validation
-md5_file = sub_dir / "MD5.txt"
-if md5_file.is_file():
-    try:
-        print("Validating checksums using MD5.txt...")
-        subprocess.run(["md5sum", "-c", "MD5.txt"], cwd=sub_dir, check=True)
-        print("Checksum validation completed.")
-    except subprocess.CalledProcessError as e:
-        print(f"MD5 checksum validation failed: {e}.")
-else:
-    print("No MD5.txt file found. Skipping checksum validation.")
-
-# Extract all .tar files in sub_dir
-for tar_file in sub_dir.glob("*.tar"):
-    try:
-        print(f"Extracting {tar_file}...")
-        subprocess.run(
-            ["tar", "-xvf", str(tar_file), "-C", str(sub_dir)],
-            check=True
-        )
-        tar_file.unlink()  # Remove the .tar file after successful extraction
-        print(f"Removed {tar_file}.")
-    except subprocess.CalledProcessError as e:
-        print(f"Extraction failed for {tar_file}: {e}. Moving to the next file.")
-        continue
-
-# Run MD5 checksum validation in extracted directory
-# (only checks the last tar_file's folder if multiple exist)
-if 'tar_file' in locals():
-    data_dir = Path(tar_file).stem
-    data_path = sub_dir / data_dir
-    md5_file2 = data_path / "MD5.txt"
-
-    if md5_file2.is_file():
-        try:
-            print("Validating checksums using MD5.txt in extracted data...")
-            subprocess.run(["md5sum", "-c", "MD5.txt"], cwd=data_path, check=True)
-            print("Checksum validation completed.")
-        except subprocess.CalledProcessError as e:
-            print(f"MD5 checksum validation failed: {e}.")
+    # READ URL LIST (OPTIONAL)
+    if links_file.exists() and links_file.stat().st_size > 0:
+        with links_file.open() as f:
+            urls = [x.strip() for x in f if x.strip()]
+        print(f"Found {len(urls)} URLs.")
     else:
-        print("No MD5.txt file found in extracted data. Skipping checksum validation.")
+        print("Links file empty or missing — skipping download phase.")
+        urls = []
 
-# Move all .fq.gz files to the raw_data directory
-for fq_gz_file in sub_dir.rglob("*.fq.gz"):
-    target_path = raw_data_dir / fq_gz_file.name
-    if fq_gz_file != target_path:
-        fq_gz_file.rename(target_path)
-        print(f"Moved {fq_gz_file} to {target_path}.")
+    # Determine directory ID
+    url_id = args.url_id or "download"
 
-# Delete subdirectories, leaving only the raw_data directory
-for dir_path in sub_dir.glob("*"):
-    if dir_path.is_dir() and dir_path != raw_data_dir:
-        shutil.rmtree(dir_path)
-        print(f"Removed subdirectory {dir_path}.")
+    sub_dir = master_dir / url_id
+    raw_data_dir = sub_dir / "raw_data"
+    raw_data_dir.mkdir(parents=True, exist_ok=True)
 
-print("Script completed successfully. Processed files are in:")
-print(raw_data_dir)
+    # 1. DOWNLOAD (optional)
+    if urls:
+        print(f"Downloading using {args.threads} threads…")
+
+        with ThreadPoolExecutor(max_workers=args.threads) as ex:
+            futures = {
+                ex.submit(download_file, url, sub_dir): url
+                for url in urls
+            }
+
+            for future in as_completed(futures):
+                url = futures[future]
+                try:
+                    future.result()
+                except Exception:
+                    print(f"Failed downloading: {url}")
+    else:
+        print("No URLs provided — skipping download.")
+
+    # 2. TOP-LEVEL MD5 CHECK
+    md5_top = sub_dir / "MD5.txt"
+
+    if md5_top.exists():
+        print("\nRunning top-level MD5 validation (for tar files)…")
+
+        if not run_cmd(
+            ["md5sum", "-c", "MD5.txt"],
+            cwd=sub_dir,
+        ):
+            print(
+                "⚠ Some top-level MD5 checks failed. "
+                "You may need to re-download or verify manually."
+            )
+    else:
+        print("No top-level MD5.txt found — skipping MD5 verification.")
+
+    # 3. EXTRACT TAR FILES
+    print("\nExtracting tar files…")
+
+    for tar_file in sub_dir.glob("*.tar"):
+        extract_dir = sub_dir / tar_file.stem
+
+        if extract_dir.exists():
+            print(
+                f"Skipping extraction for {tar_file} "
+                "(directory already exists)."
+            )
+            continue
+
+        print(f"Extracting {tar_file}…")
+
+        if run_cmd(
+            [
+                "tar",
+                "-xvf",
+                str(tar_file),
+                "-C",
+                str(sub_dir),
+            ]
+        ):
+            tar_file.unlink()
+            print(f"Removed {tar_file}.")
+        else:
+            print(
+                f"Extraction failed for {tar_file}. Continuing."
+            )
+
+    # 4. INNER MD5 VALIDATION
+    print("\nRunning inner MD5 checks…")
+
+    for extracted_dir in sub_dir.iterdir():
+        if (
+            not extracted_dir.is_dir()
+            or extracted_dir.name == "raw_data"
+        ):
+            continue
+
+        inner_md5 = extracted_dir / "MD5.txt"
+
+        if inner_md5.exists():
+            print(
+                f"Validating MD5 inside {extracted_dir}…"
+            )
+            run_cmd(
+                ["md5sum", "-c", "MD5.txt"],
+                cwd=extracted_dir,
+            )
+        else:
+            print(
+                f"No inner MD5 found inside {extracted_dir} "
+                "— skipping."
+            )
+
+    # 5. MOVE fq.gz FILES INTO raw_data/
+    print("\nCollecting .fq.gz files…")
+
+    for fq in sub_dir.rglob("*.fq.gz"):
+        dst = raw_data_dir / fq.name
+
+        if fq != dst:
+            fq.rename(dst)
+            print(f"Moved {fq} → {dst}")
+
+    # 6. CLEANUP — remove leftover extracted folders
+    print("\nCleaning up extracted directories…")
+
+    for p in sub_dir.iterdir():
+        if p.is_dir() and p != raw_data_dir:
+            shutil.rmtree(p)
+            print(f"Removed {p}")
+
+    print("\nCOMPLETE")
+    print(f"Final processed files stored in:\n{raw_data_dir}")
+
+
+if __name__ == "__main__":
+    main()
+```
